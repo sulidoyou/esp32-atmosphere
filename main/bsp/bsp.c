@@ -17,7 +17,7 @@ void bsp_init(void)
 
     bsp_i2c_init();           // I2C总线（ES8311 CODEC）
     bsp_i2s_init();           // I2S音频总线
-    bsp_pca9557_init();       // GPIO扩展器（PA功放控制）
+    // bsp_pca9557_init();     // ❌ 硬件无PCA9557，仅74HC245（直接IO），注释掉避免I2C冲突
     bsp_es8311_init();        // ES8311音频编解码器
 
     tf_mount();                // SD卡挂载（音乐文件读取）
@@ -25,9 +25,10 @@ void bsp_init(void)
 
     bsp_breathing_led_init(); // 呼吸灯PWM
     bsp_magent_init();         // 电磁铁GPIO
+    bsp_drum_init();           // 鼓控制器初始化
 
     bsp_key_init();           // 按键初始化
-    bsp_wifi_init();          // WiFi连接（静态IP：192.168.0.200）
+    bsp_wifi_init();          // WiFi连接（静态IP：192.168.0.247）
 
     ESP_LOGI(TAG, "Board init done");
 }
