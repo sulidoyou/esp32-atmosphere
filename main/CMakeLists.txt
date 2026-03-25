@@ -15,6 +15,8 @@ idf_component_register(SRCS
                             "bsp/bsp_led.c"
                             "bsp/bsp_breathing_led.c"
                             "bsp/bsp_magent.c"
+                            "bsp/bsp_drum.c"
+                            "bsp/bsp_pa.c"
                             "bsp/bsp_key.c"
                             "bsp/bsp_keyhandle.c"
                             "bsp/bsp_adc.c"

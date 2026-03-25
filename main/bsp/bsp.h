@@ -43,6 +43,7 @@
 #include "bsp_music_play.h"
 #include "bsp_led.h"
 #include "bsp_magent.h"
+#include "bsp_drum.h"
 #include "bsp_breathing_led.h"
 #include "bsp_key.h"
 #include "bsp_keyhandle.h"

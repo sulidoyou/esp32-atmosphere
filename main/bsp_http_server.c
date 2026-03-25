@@ -108,7 +108,43 @@ static const char s_html[] =
 "</div>"
 "</div>"
 
-"<div class=footer>ESP32-S3 v1.1</div>"
+"<div class=card><h2>\u1f389 \u6476\u9f13\u63a7\u5236</h2>"
+"<div style=margin-top:8px;>"
+"<div style=display:flex;gap:8px;flex-wrap:wrap;>"
+"<button class=purple id=db1 onclick=setDrumMode(1)>\u9884\u8bbe</button>"
+"<button class=purple id=db2 onclick=setDrumMode(2)>\u624b\u52a8</button>"
+"<button class=purple id=db3 onclick=setDrumMode(3)>MIC\u540c\u6b65</button>"
+"<button class=purple id=db4 onclick=setDrumMode(4)>\u97f3\u4e50\u540c\u6b65</button>"
+"</div>"
+"<div style=margin-top:8px;>"
+"<label style=font-size:11px;color:#888>BPM:</label>"
+"<input type=range id=dBpm min=60 max=240 value=120 oninput=setDrumBpm(this.value)>"
+"<span id=dBpmVal style=font-size:11px;color:#00d4ff>120</span>"
+"</div>"
+"<div style=margin-top:6px;>"
+"<label style=font-size:11px;color:#888>\u529b\u5ea6:</label>"
+"<input type=range id=dVel min=10 max=100 value=70 oninput=setDrumVel(this.value)>"
+"<span id=dVelVal style=font-size:11px;color:#00d4ff>70%</span>"
+"</div>"
+"<div style=margin-top:8px;>"
+"<button class=purple id=dr1 onclick=setDrumRhythm(0)>\u5355\u51fb</button>"
+"<button class=purple id=dr2 onclick=setDrumRhythm(1)>\u53cc\u51fb</button>"
+"<button class=purple id=dr3 onclick=setDrumRhythm(2)>\u6eda\u594f</button>"
+"<button class=purple id=dr4 onclick=setDrumRhythm(3)>\u534e\u5c14\u5179</button>"
+"<button class=purple id=dr5 onclick=setDrumRhythm(4)>\u6447\u6eda</button>"
+"</div>"
+"<div style=margin-top:8px;display:flex;gap:8px;align-items:center;>"
+"<button class=green onclick=drumStart()>\u25b6 \u5f00\u59cb</button>"
+"<button class=red onclick=drumStop()>\u25a0 \u505c\u6b62</button>"
+"<span id=drumStatus style=font-size:11px;color:#888>\u5f85\u673a</span>"
+"</div>"
+"<div style=margin-top:8px;display:grid;grid-template-columns:1fr 1fr;gap:8px;>"
+"<button class=mbtn style=background:#e67e22;font-size:16px;font-weight:bold onclick=drumHit(0)>\u5de6\u6476</button>"
+"<button class=mbtn style=background:#3498db;font-size:16px;font-weight:bold onclick=drumHit(1)>\u53f3\u6476</button>"
+"</div>"
+"</div>"
+
+"<div class=footer>"ESP32-S3 v1.1</div>"
 "</div>"
 "<script>"
 "var playing=true;"
@@ -284,6 +320,15 @@ void bsp_http_server_start(void)
     cfg.server_port = 80;
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
+    // 网络优化
+    cfg.keep_alive_enable = true;
+    cfg.keep_alive_idle = 5;
+    cfg.keep_alive_interval = 5;
+    cfg.keep_alive_count = 3;
+    cfg.backlog_conn = 10;
+    cfg.recv_wait_timeout = 30;
+    cfg.send_wait_timeout = 30;
+    cfg.max_resp_headers = 16;
 
     httpd_handle_t srv = NULL;
     esp_err_t err = httpd_start(&srv, &cfg);
@@ -298,6 +343,7 @@ void bsp_http_server_start(void)
     httpd_uri_t l = {"/l", HTTP_GET, led_cb, NULL};
     httpd_uri_t v = {"/v", HTTP_GET, vol_cb, NULL};
     httpd_uri_t g = {"/g", HTTP_GET, magnet_cb, NULL};
+    httpd_uri_t d = {"/d", HTTP_GET, drum_cb, NULL};
 
     httpd_register_uri_handler(srv, &r);
     httpd_register_uri_handler(srv, &m);

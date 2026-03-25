@@ -93,6 +93,10 @@ void bsp_wifi_init(void)
     if (ret != ESP_OK) { ESP_LOGW(TAG, "wifi init fail"); return; }
     ESP_LOGI(TAG, "wifi_init OK");
 
+    // 5.1 禁用WiFi功耗管理（直供电，不需要省电，降低延迟）
+    ret = esp_wifi_set_ps(WIFI_PS_NONE);
+    ESP_LOGI(TAG, "WiFi PS disabled: %d", ret);
+
     // 6. 注册事件处理器
     ret = esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_STA_START,
                                     &wifi_event_handler, NULL);
