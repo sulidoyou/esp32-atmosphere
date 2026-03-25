@@ -1,0 +1,10 @@
+build/
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+*.bin
+*.elf
+*.map
+sdkconfig
