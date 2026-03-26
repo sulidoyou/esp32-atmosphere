@@ -14,7 +14,7 @@ static bool s_connected = false;
 static char s_ip_str[20] = {0};
 
 // 设备静态IP配置（需要和路由器在同一网段）
-#define DEVICE_IP      "192.168.0.200"
+#define DEVICE_IP      "192.168.0.247"
 #define DEVICE_NETMASK "255.255.255.0"
 #define DEVICE_GW     "192.168.0.1"
 

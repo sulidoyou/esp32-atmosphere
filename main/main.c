@@ -94,7 +94,7 @@ static void print_banner(void)
 {
     printf("\n");
     printf("========================================\n");
-    printf("   氛围系统 ESP32-S3 v1.2\n");
+    printf("   氛围系统 ESP32-S3 v1.3\n");
     printf("   Free Luck Amusement Co., Ltd.\n");
     printf("========================================\n");
     printf("  GPIO46: Breathing LED (LEDC PWM)\n");
@@ -104,8 +104,8 @@ static void print_banner(void)
     printf("  I2C:    SCL=2 SDA=1 (ES8311/PCA9557)\n");
     printf("  I2S:    MCLK=38 BCLK=14 WS=13\n");
     printf("  DOUT=45 DIN=12\n");
-    printf("  WiFi:   freeluck6 @ 192.168.0.200\n");
-    printf("  HTTP:    http://192.168.0.200\n");
+    printf("  WiFi:   freeluck6 @ 192.168.0.247\n");
+    printf("  HTTP:    http://192.168.0.247\n");
     printf("========================================\n\n");
 }
 
@@ -134,5 +134,5 @@ void app_main(void)
     ESP_LOGI(TAG, "HTTP server started");
 
     ESP_LOGI(TAG, "=== Atmosphere System Ready ===");
-    ESP_LOGI(TAG, "Web UI: http://192.168.0.200");
+    ESP_LOGI(TAG, "Web UI: http://192.168.0.247");
 }

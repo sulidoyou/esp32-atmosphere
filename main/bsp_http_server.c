@@ -144,7 +144,7 @@ static const char s_html[] =
 "</div>"
 "</div>"
 
-"<div class=footer>"ESP32-S3 v1.1</div>"
+"<div class=footer>"ESP32-S3 v1.3</div>"
 "</div>"
 "<script>"
 "var playing=true;"
