@@ -56,6 +56,22 @@ void bsp_i2s_init(void)
     ESP_LOGI(TAG, "I2S initialized successfully");
 }
 
+// 播放PCM采样（非阻塞，直接写I2S TX）
+void bsp_i2s_play_pcm(const int16_t *samples, int count)
+{
+    if (!i2stx_handle) return;
+    size_t bytes_written = 0;
+    // 16bit mono → I2S需要16bit左对齐mono
+    // I2S slot配置为MONO但codec期望stereo，实际写入时复制L=R
+    int16_t stereo[count * 2];
+    for (int i = 0; i < count; i++) {
+        stereo[i * 2]     = samples[i];
+        stereo[i * 2 + 1] = samples[i];
+    }
+    i2s_channel_write(i2stx_handle, stereo, count * 2 * sizeof(int16_t),
+                       &bytes_written, pdMS_TO_TICKS(50));
+}
+
 
 
 

@@ -22,10 +22,11 @@
 
 static const char *TAG = "BreathingLED";
 
-static uint8_t s_mode = 0;       // 0=呼吸, 1=彩虹
+static uint8_t s_mode = 0;       // 0=呼吸, 1=彩虹, 2=鼓点闪
 static uint16_t s_hue = 0;        // 色相 0~359
 static uint8_t  s_brightness = 128;
 static int8_t   s_direction = 1;  // 1=渐亮, -1=渐暗
+static uint16_t s_flash_ms = 0;    // 鼓点闪光剩余时间(ms)，0=无闪光
 
 // HSV → RGB 转换（来源：ESP-IDF LEDC例程）
 static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v,
@@ -84,7 +85,28 @@ void breathing_led_task(void *pvParameters)
              BREATHING_LED_GPIO, (unsigned long)max_duty);
 
     while (1) {
-        if (s_mode == 0) {
+        if (s_mode == 2) {
+            // --- 鼓点闪光模式：全亮直到 flash_ms 耗尽 ---
+            if (s_flash_ms > 0) {
+                uint32_t flash_duty = (1 << LEDC_TIMER_8_BIT) - 1;  // 255
+                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL,
+                                         flash_duty, 5);  // 5ms快速拉满
+                ledc_fade_start(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL, LEDC_FADE_NO_WAIT);
+                vTaskDelay(pdMS_TO_TICKS(s_flash_ms > 50 ? 50 : s_flash_ms));
+                if (s_flash_ms >= 50) {
+                    s_flash_ms -= 50;
+                } else {
+                    s_flash_ms = 0;
+                }
+                if (s_flash_ms == 0) {
+                    // 闪光结束，恢复呼吸模式
+                    s_mode = 0;
+                    ESP_LOGI(TAG, "LED flash done, restore breath mode");
+                }
+            } else {
+                s_mode = 0;
+            }
+        } else if (s_mode == 0) {
             // --- 呼吸模式 ---
             uint32_t target = s_brightness;
             ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL,
@@ -148,10 +170,18 @@ void breathing_led_task(void *pvParameters)
 
 void breathing_led_set_mode(uint8_t mode)
 {
-    // 允许0和1，其他值忽略
+    // 允许0/1，其他值忽略
     if (mode > 1) return;
     s_mode = mode;
     ESP_LOGI(TAG, "Mode set to: %s", mode == 0 ? "breath" : "rainbow");
+}
+
+// 鼓点闪光：调用后LED立即全亮，持续ms后自动恢复
+void breathing_led_flash(uint16_t ms)
+{
+    s_flash_ms = ms;
+    s_mode = 2;  // flash mode
+    ESP_LOGI(TAG, "LED flash: %ums", ms);
 }
 
 uint8_t breathing_led_get_mode(void)

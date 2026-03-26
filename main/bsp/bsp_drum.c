@@ -1,5 +1,6 @@
 #include "bsp_drum.h"
 #include "bsp_magent.h"
+#include "bsp.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -48,6 +49,7 @@ static rhythm_type_t s_current_rhythm = RHYTHM_SINGLE;
 static TimerHandle_t s_beat_timer = NULL;
 static StaticTimer_t s_beat_timer_buf;
 static int s_beat_index = 0;
+
 
 static void drum_hit_with_velocity(uint8_t drum);
 static void beat_timer_callback(TimerHandle_t t);
@@ -99,10 +101,15 @@ static uint16_t velocity_to_ms(uint8_t vel)
     return 50 + (vel * 250 / 100);
 }
 
+// 鼓点触发LED闪光
 static void drum_hit_with_velocity(uint8_t drum)
 {
     uint16_t ms = velocity_to_ms(s_drum.velocity);
     magent_fire_ch_with_ms(drum, ms);
+    // 鼓点触发LED闪光（力度越大闪光越长）
+    extern void breathing_led_flash(uint16_t flash_ms);
+    uint16_t flash_ms = 30 + (s_drum.velocity * 80 / 100);  // 30~110ms
+    breathing_led_flash(flash_ms);
 }
 
 static void beat_timer_callback(TimerHandle_t t)

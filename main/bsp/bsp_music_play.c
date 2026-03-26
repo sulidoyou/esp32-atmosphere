@@ -158,12 +158,22 @@ static void _audio_player_callback(audio_player_cb_ctx_t *ctx)
         play_index(index);
         break;
     }
-    case AUDIO_PLAYER_CALLBACK_EVENT_PLAYING:
+    case AUDIO_PLAYER_CALLBACK_EVENT_PLAYING: {
         pa_en(1);  // 打开功放
+        // 音乐播放 → 自动启动鼓节奏（音乐同步模式）
+        extern void bsp_drum_set_mode(drum_mode_t mode);
+        extern void bsp_drum_start(void);
+        bsp_drum_set_mode(DRUM_MODE_MUSIC_SYNC);
+        bsp_drum_start();
         break;
-    case AUDIO_PLAYER_CALLBACK_EVENT_PAUSE:
+    }
+    case AUDIO_PLAYER_CALLBACK_EVENT_PAUSE: {
         pa_en(0);  // 关闭功放
+        // 音乐暂停 → 停止鼓节奏
+        extern void bsp_drum_stop(void);
+        bsp_drum_stop();
         break;
+    }
     default:
         break;
     }

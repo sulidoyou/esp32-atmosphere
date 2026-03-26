@@ -77,6 +77,16 @@ static const char s_html[] =
 ".fw-btn:disabled { background:#333; color:#666; cursor:not-allowed; }"
 ".fw-status { font-size:11px; color:#555; margin-top:4px; text-align:center; }"
 ".part-info { font-size:10px; color:#444; margin-top:2px; }"
+".drum-row { display:grid; grid-template-columns:1fr 1fr 1fr 1fr 1fr; gap:4px; margin-top:6px; }"
+".drum-btn { width:100%; padding:8px 2px; border:none; border-radius:8px; font-size:11px; font-weight:bold; cursor:pointer; background:#1a1a3a; color:#555; transition:all .15s; }"
+".drum-btn.active { background:linear-gradient(135deg,#7b2ff7,#f107a3); color:#fff; box-shadow:0 0 12px rgba(123,47,247,0.4); }"
+".drum-ctrl { display:flex; align-items:center; gap:6px; margin-top:5px; font-size:12px; color:#666; }"
+".drum-ctrl input { flex:1; accent-color:#9b59b6; }"
+".drum-ctrl span { min-width:32px; text-align:right; color:#888; }"
+".drum-start { width:100%; padding:10px; background:linear-gradient(135deg,#9b59b6,#e74c3c); color:#fff; font-size:13px; font-weight:bold; border-radius:8px; border:none; cursor:pointer; margin-top:6px; }"
+".drum-start.running { background:linear-gradient(135deg,#e74c3c,#c0392b); animation:dpulse .6s infinite alternate; }"
+"@keyframes dpulse { from{box-shadow:0 0 8px rgba(231,76,60,.4)} to{box-shadow:0 0 20px rgba(231,76,60,.8)} }"
+".drum-status { font-size:11px; color:#555; margin-top:4px; text-align:center; }"
 "</style>"
 "</head>"
 "<body>"
@@ -130,6 +140,30 @@ static const char s_html[] =
 "<button class=mbtn id=mb2 onclick=fire(2)>CH3</button>"
 "<button class=mbtn id=mb3 onclick=fire(3)>CH4</button>"
 "</div>"
+"</div>"
+
+"<div class=card><h2>🥁 敲鼓控制</h2>"
+"<div class=drum-row>"
+"<button class=drum-btn id=dm0 onclick=setDrumMode(0)>关闭</button>"
+"<button class=drum-btn id=dm1 onclick=setDrumMode(1)>预设</button>"
+"<button class=drum-btn id=dm3 onclick=setDrumMode(3)>麦克风</button>"
+"<button class=drum-btn id=dm4 onclick=setDrumMode(4)>音乐</button>"
+"</div>"
+"<div class=drum-row style='margin-top:4px;'>"
+"<button class=drum-btn id=dr0 onclick=setDrumRhythm(0)>单击</button>"
+"<button class=drum-btn id=dr1 onclick=setDrumRhythm(1)>双击</button>"
+"<button class=drum-btn id=dr2 onclick=setDrumRhythm(2)>滚奏</button>"
+"<button class=drum-btn id=dr3 onclick=setDrumRhythm(3)>华尔兹</button>"
+"<button class=drum-btn id=dr4 onclick=setDrumRhythm(4)>摇滚</button>"
+"</div>"
+"<div class=drum-ctrl>"
+"<span>BPM</span><input type=range id=drumBpm min=60 max=240 value=120 oninput=drumBpmVal.value=this.value><span id=drumBpmVal>120</span>"
+"</div>"
+"<div class=drum-ctrl>"
+"<span>力度</span><input type=range id=drumVel min=10 max=100 value=70 oninput=drumVelVal.value=this.value><span id=drumVelVal>70</span>"
+"</div>"
+"<button class=drum-start id=drumStartBtn onclick=toggleDrum()>启动敲鼓</button>"
+"<div class=drum-status id=drumStatus>状态: 停止 | 节拍: -- | 力度: --</div>"
 "</div>"
 
 "<div class=card><h2>OTA 固件更新</h2>"
@@ -259,6 +293,23 @@ static const char s_html[] =
 "  var e2=document.getElementById('fwver');if(e2)e2.textContent='v'+v;"
 "});"
 "setInterval(ping,8000);"
+"// ===== 敲鼓控制 ====="
+"var drumRunning=false;"
+"var drumMode=0, drumRhythm=0;"
+"function setDrumMode(m){drumMode=m;for(var i=0;i<5;i++){var b=document.getElementById('dm'+i);if(b)b.className=i===m?'drum-btn active':'drum-btn';}}"
+"function setDrumRhythm(r){drumRhythm=r;for(var i=0;i<5;i++){var b=document.getElementById('dr'+i);if(b)b.className=i===r?'drum-btn active':'drum-btn';}}"
+"function toggleDrum(){"
+"  var bpm=parseInt(document.getElementById('drumBpm').value);"
+"  var vel=parseInt(document.getElementById('drumVel').value);"
+"  var act=drumRunning?'stop':'start';"
+"  drumRunning=!drumRunning;"
+"  var btn=document.getElementById('drumStartBtn');"
+"  btn.textContent=drumRunning?'停止敲鼓':'启动敲鼓';"
+"  btn.className=drumRunning?'drum-start running':'drum-start';"
+"  fetch('/drum?m='+drumMode+'&r='+drumRhythm+'&bpm='+bpm+'&vel='+vel+'&a='+act).then(function(r){return r.json()}).then(function(d){"
+"    document.getElementById('drumStatus').textContent='状态: '+(d.running?'运行':'停止')+' | 节奏: '+d.rhythm+' | BPM: '+d.bpm+' | 力度: '+d.vel;});"
+"}"
+"setDrumMode(0);setDrumRhythm(0);"
 "</script>"
 "</body></html>";
 
@@ -325,6 +376,10 @@ static esp_err_t vol_cb(httpd_req_t *req)
     if (vol < 0) vol = 0;
     if (vol > 100) vol = 100;
     music_set_volume((uint8_t)vol);
+    char resp[32];
+    int len = snprintf(resp, sizeof(resp), "{\"vol\":%d}", vol);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, len);
     return ESP_OK;
 }
 
@@ -349,6 +404,62 @@ static esp_err_t magnet_cb(httpd_req_t *req)
     snprintf(resp, sizeof(resp), "{\"ok\":1,\"ch\":%d,\"ms\":%d}", channel, ms);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
+    return ESP_OK;
+}
+
+static esp_err_t drum_cb(httpd_req_t *req)
+{
+    char buf[64] = {0}, ms[8] = {0}, rs[8] = {0}, bpm_s[8] = {0}, vel_s[8] = {0}, act[8] = {0};
+    httpd_req_get_url_query_str(req, buf, sizeof(buf));
+    int m = atoi(httpd_query_key_value(buf, "m", ms, sizeof(ms)) == ESP_OK ? ms : "0");
+    int r = atoi(httpd_query_key_value(buf, "r", rs, sizeof(rs)) == ESP_OK ? rs : "0");
+    int bpm = atoi(httpd_query_key_value(buf, "bpm", bpm_s, sizeof(bpm_s)) == ESP_OK ? bpm_s : "120");
+    int vel = atoi(httpd_query_key_value(buf, "vel", vel_s, sizeof(vel_s)) == ESP_OK ? vel_s : "70");
+    httpd_query_key_value(buf, "a", act, sizeof(act));
+
+    extern void bsp_drum_set_mode(drum_mode_t mode);
+    extern void bsp_drum_set_bpm(uint8_t b);
+    extern void bsp_drum_set_velocity(uint8_t v);
+    extern void bsp_drum_set_rhythm(rhythm_type_t rt);
+    extern void bsp_drum_start(void);
+    extern void bsp_drum_stop(void);
+    extern void bsp_drum_get_info(drum_info_t *info);
+
+    drum_mode_t modes[5] = {DRUM_MODE_NONE, DRUM_MODE_PRESET, DRUM_MODE_MANUAL, DRUM_MODE_MIC_SYNC, DRUM_MODE_MUSIC_SYNC};
+    if (m < 0 || m > 4) m = 0;
+    rhythm_type_t rhythms[5] = {RHYTHM_SINGLE, RHYTHM_DOUBLE, RHYTHM_ROLL, RHYTHM_WALTZ, RHYTHM_ROCK};
+    if (r < 0 || r > 4) r = 0;
+    if (bpm < 60) bpm = 60;
+    if (bpm > 240) bpm = 240;
+    if (vel < 10) vel = 10;
+    if (vel > 100) vel = 100;
+
+    bsp_drum_set_mode(modes[m]);
+    bsp_drum_set_rhythm(rhythms[r]);
+    bsp_drum_set_bpm(bpm);
+    bsp_drum_set_velocity(vel);
+
+    bool running = false;
+    if (strcmp(act, "start") == 0) {
+        bsp_drum_start();
+        running = true;
+    } else if (strcmp(act, "stop") == 0) {
+        bsp_drum_stop();
+        running = false;
+    } else {
+        // 查询状态
+        drum_info_t info;
+        bsp_drum_get_info(&info);
+        running = info.running;
+    }
+
+    const char *rhythm_names[5] = {"单击","双击","滚奏","华尔兹","摇滚"};
+    char resp[128];
+    int len = snprintf(resp, sizeof(resp),
+        "{\"running\":%s,\"mode\":%d,\"rhythm\":\"%s\",\"bpm\":%d,\"vel\":%d}",
+        running ? "true" : "false", m, rhythm_names[r], bpm, vel);
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, resp, len);
     return ESP_OK;
 }
 
@@ -642,6 +753,7 @@ void bsp_http_server_start(void)
         {"/l",            HTTP_GET,  led_cb},
         {"/v",            HTTP_GET,  vol_cb},
         {"/g",            HTTP_GET,  magnet_cb},
+        {"/drum",         HTTP_GET,  drum_cb},
         {"/api/version",  HTTP_GET,  version_cb},
         {"/api/ota_info", HTTP_GET,  ota_info_cb},
         {"/api/ota_upload", HTTP_POST, ota_upload_cb},
