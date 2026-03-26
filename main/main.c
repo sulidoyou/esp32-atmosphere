@@ -94,7 +94,7 @@ static void print_banner(void)
 {
     printf("\n");
     printf("========================================\n");
-    printf("   氛围系统 ESP32-S3 v1.3\n");
+    printf("   氛围系统 ESP32-S3 " APP_VERSION_STR "\n");
     printf("   Free Luck Amusement Co., Ltd.\n");
     printf("========================================\n");
     printf("  GPIO46: Breathing LED (LEDC PWM)\n");

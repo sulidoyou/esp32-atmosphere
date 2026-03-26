@@ -27,6 +27,9 @@
 #include "driver/sdmmc_host.h"
 #include <locale.h>  // 区域设置库，用于支持中文
 
+
+#include "version.h"
+
 #include "esp_codec_dev.h"
 #include "esp_codec_dev_defaults.h"
 #include "audio_codec_ctrl_if.h"

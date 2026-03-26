@@ -178,7 +178,7 @@ static const char s_html[] =
 "<div class=fw-status id=fwStatus></div>"
 "</div>"
 
-"<div class=footer>ESP32-S3 <span id=ver style=color:#ff9500;font-weight:bold>v1.3</span></div>"
+"<div class=footer>ESP32-S3 <span id=ver style=color:#ff9500;font-weight:bold>" APP_VERSION_STR "</span></div>"
 "</div>"
 "<script>"
 "var req=null;"
@@ -465,7 +465,7 @@ static esp_err_t drum_cb(httpd_req_t *req)
 
 static esp_err_t version_cb(httpd_req_t *req)
 {
-    httpd_resp_send(req, "v1.3", 5);
+    httpd_resp_send(req, APP_VERSION_STR, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
