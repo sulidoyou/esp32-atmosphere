@@ -168,3 +168,8 @@ void bsp_drum_hit(uint8_t drum)
 {
     drum_hit_with_velocity(drum == 0 ? LEFT_DRUM_CH : RIGHT_DRUM_CH);
 }
+
+bool bsp_drum_is_mic_sync_mode(void)
+{
+    return s_drum.mode == DRUM_MODE_MIC_SYNC;
+}

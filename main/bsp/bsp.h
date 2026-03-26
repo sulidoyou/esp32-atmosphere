@@ -51,6 +51,7 @@
 #include "bsp_key.h"
 #include "bsp_keyhandle.h"
 #include "bsp_adc.h"
+#include "bsp_mic.h"
 #include "bsp_wifi.h"
 
 void bsp_init(void);

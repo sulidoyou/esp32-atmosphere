@@ -41,5 +41,6 @@ void bsp_drum_set_rhythm(rhythm_type_t type);
 void bsp_drum_start(void);
 void bsp_drum_stop(void);
 void bsp_drum_hit(uint8_t drum);
+bool bsp_drum_is_mic_sync_mode(void);
 
 #endif

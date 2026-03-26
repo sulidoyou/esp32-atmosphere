@@ -3,7 +3,6 @@
 idf_component_register(SRCS
                             "main.c"
                             "bsp_wifi.c"
-                            "bsp_wifi.c"
                             "bsp/bsp_http_server.c"
                             "bsp/bsp_i2c.c"
                             "bsp/bsp.c"
@@ -20,6 +19,7 @@ idf_component_register(SRCS
                             "bsp/bsp_key.c"
                             "bsp/bsp_keyhandle.c"
                             "bsp/bsp_adc.c"
+                            "bsp/bsp_mic.c"
                     INCLUDE_DIRS "./"
                                   "bsp"
                     )

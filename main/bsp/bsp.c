@@ -5,6 +5,9 @@ static const char *TAG = "BSP";
 
 // bsp_init: 板级初始化总入口
 // 调用顺序很重要：I2C→I2S→CODEC→SD卡→音乐→灯光→按键→WiFi
+// 前向声明（clap_trigger定义在bsp_init之后）
+static void clap_trigger(void);
+
 void bsp_init(void)
 {
     ESP_LOGI(TAG, "Board init start");
@@ -27,7 +30,14 @@ void bsp_init(void)
     bsp_magent_init();         // 电磁铁GPIO
     bsp_drum_init();           // 鼓控制器初始化
 
+        // 麦克风拍手检测
+    extern void bsp_mic_enable(bool en);
+    extern void bsp_mic_set_clap_callback(void (*cb)(void));
+    bsp_mic_enable(true);
+    bsp_mic_set_clap_callback(clap_trigger);
+
     bsp_key_init();           // 按键初始化
+
     bsp_wifi_init();          // WiFi连接（静态IP：192.168.0.247）
 
     ESP_LOGI(TAG, "Board init done");
@@ -37,6 +47,17 @@ void bsp_init(void)
 // 以下为废弃代码（保留用于参考，bsp_init中未调用）
 // 使用 mp3_palyer_init() 和 music_play/pause/next/prev 控制音乐
 // ---------------------------------------------------------------------------
+
+// 拍手触发：只在本机MIC_SYNC模式下敲鼓+灯光
+static void clap_trigger(void)
+{
+    extern bool bsp_drum_is_mic_sync_mode(void);
+    if (!bsp_drum_is_mic_sync_mode()) return;
+    extern void bsp_drum_hit(uint8_t drum);
+    extern void breathing_led_flash(uint16_t ms);
+    bsp_drum_hit(0);  // LEFT_DRUM_CH
+    breathing_led_flash(80);
+}
 
 static uint16_t _RECORD_FILE_WRITE(const char *file_name, uint8_t *datas,
                                    uint16_t len, size_t max)
