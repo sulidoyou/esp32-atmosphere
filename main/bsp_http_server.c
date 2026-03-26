@@ -186,6 +186,39 @@ static const char s_html[] =
 "  setTimeout(function(){b.className='mbtn';},ms+100);"
 "}"
 ""
+"// ========== 鼓控制JS =========="
+"function setDrumMode(m){"
+"  fetch('/d?mode='+m).catch(function(e){});"
+"  document.querySelectorAll('[id^=db]').forEach(function(b,i){"
+"    b.className=i==m-1?'purple active':'purple';"
+"  });"
+"}"
+"function setDrumBpm(v){"
+"  document.getElementById('dBpmVal').textContent=v;"
+"  fetch('/d?bpm='+v).catch(function(e){});"
+"}"
+"function setDrumVel(v){"
+"  document.getElementById('dVelVal').textContent=v+'%';"
+"  fetch('/d?vel='+v).catch(function(e){});"
+"}"
+"function setDrumRhythm(r){"
+"  fetch('/d?rhythm='+r).catch(function(e){});"
+"  document.querySelectorAll('[id^=dr]').forEach(function(b,i){"
+"    b.className=i==r?'purple active':'purple';"
+"  });"
+"}"
+"function drumStart(){"
+"  fetch('/d?cmd=start').catch(function(e){});"
+"  document.getElementById('drumStatus').textContent='\u8fd0\u884c\u4e2d';"
+"}"
+"function drumStop(){"
+"  fetch('/d?cmd=stop').catch(function(e){});"
+"  document.getElementById('drumStatus').textContent='\u5df2\u505c\u6b62';"
+"}"
+"function drumHit(d){"
+"  fetch('/d?hit='+d).catch(function(e){});"
+"}"
+""
 "// Heartbeat: status only, every 8s"
 "function ping(){"
 "  fetch('/m?c=info').then(function(r){return r.json()}).then(upd).catch(function(){"
@@ -313,6 +346,59 @@ static esp_err_t magnet_cb(httpd_req_t *req)
     return ESP_OK;
 }
 
+// ============ 鼓控制HTTP处理 ============
+static esp_err_t drum_cb(httpd_req_t *req)
+{
+    char buf[64] = {0};
+    char cmd[16] = {0}, val[16] = {0};
+    httpd_req_get_url_query_str(req, buf, sizeof(buf));
+
+    // 解析命令
+    if (httpd_query_key_value(buf, "cmd", cmd, sizeof(cmd)) == ESP_OK) {
+        if (strcmp(cmd, "start") == 0) {
+            extern void bsp_drum_start(void);
+            bsp_drum_start();
+        } else if (strcmp(cmd, "stop") == 0) {
+            extern void bsp_drum_stop(void);
+            bsp_drum_stop();
+        }
+    }
+
+    // 模式设置: mode=1-4
+    if (httpd_query_key_value(buf, "mode", val, sizeof(val)) == ESP_OK) {
+        extern void bsp_drum_set_mode(uint8_t mode);
+        bsp_drum_set_mode((uint8_t)atoi(val) - 1);
+    }
+
+    // BPM: bpm=60-240
+    if (httpd_query_key_value(buf, "bpm", val, sizeof(val)) == ESP_OK) {
+        extern void bsp_drum_set_bpm(uint8_t bpm);
+        bsp_drum_set_bpm((uint8_t)atoi(val));
+    }
+
+    // 力度: vel=10-100
+    if (httpd_query_key_value(buf, "vel", val, sizeof(val)) == ESP_OK) {
+        extern void bsp_drum_set_velocity(uint8_t vel);
+        bsp_drum_set_velocity((uint8_t)atoi(val));
+    }
+
+    // 节奏: rhythm=0-4
+    if (httpd_query_key_value(buf, "rhythm", val, sizeof(val)) == ESP_OK) {
+        extern void bsp_drum_set_rhythm(uint8_t rhythm);
+        bsp_drum_set_rhythm((uint8_t)atoi(val));
+    }
+
+    // 打击: hit=0(左) 或 hit=1(右)
+    if (httpd_query_key_value(buf, "hit", val, sizeof(val)) == ESP_OK) {
+        extern void bsp_drum_hit(uint8_t drum);
+        bsp_drum_hit((uint8_t)atoi(val));
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":1}", 10);
+    return ESP_OK;
+}
+
 // ============ 启动 ============
 void bsp_http_server_start(void)
 {
@@ -350,6 +436,7 @@ void bsp_http_server_start(void)
     httpd_register_uri_handler(srv, &l);
     httpd_register_uri_handler(srv, &v);
     httpd_register_uri_handler(srv, &g);
+    httpd_register_uri_handler(srv, &d);
 
     ESP_LOGI(TAG, "HTTP server :80");
 }
