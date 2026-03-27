@@ -54,9 +54,7 @@ void magent_fire_ch_with_ms(int ch, int ms)
     // 故不需要额外临界区保护
     g_end_time[ch] = now_ms + ms;
     gpio_set_level(g_gpio[ch], 1);
-
-    ESP_LOGI(TAG, "[%lldms] CH%d HIGH | GPIO=%d | %dms",
-             now_ms, ch + 1, (int)g_gpio[ch], ms);
+    // ESP_LOGI(TAG, "[%lldms] CH%d HIGH | GPIO=%d | %dms", now_ms, ch+1, (int)g_gpio[ch], ms);
 }
 
 void magent_fire_ch(int ch)

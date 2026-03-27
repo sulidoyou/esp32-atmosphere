@@ -181,7 +181,7 @@ void breathing_led_flash(uint16_t ms)
 {
     s_flash_ms = ms;
     s_mode = 2;  // flash mode
-    ESP_LOGI(TAG, "LED flash: %ums", ms);
+    // ESP_LOGI(TAG, "LED flash: %ums", ms);
 }
 
 uint8_t breathing_led_get_mode(void)
