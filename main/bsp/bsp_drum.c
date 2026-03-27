@@ -112,7 +112,7 @@ static void beat_timer_callback(TimerHandle_t t)
     if (beat_ms < 50) beat_ms = 50;
     
     if (s_beat_timer == NULL) {
-        s_beat_timer = xTimerCreateStatic("beat", pdMS_TO_TICKS(beat_ms), pdFALSE, NULL, beat_timer_callback, &s_beat_timer_buf);
+        s_beat_timer = xTimerCreateStatic("beat", pdMS_TO_TICKS(beat_ms), pdTRUE, NULL, beat_timer_callback, &s_beat_timer_buf);
     } else {
         xTimerChangePeriod(s_beat_timer, pdMS_TO_TICKS(beat_ms), 0);
     }
