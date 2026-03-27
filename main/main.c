@@ -70,7 +70,7 @@ void atmosphere_mode_task(void *pv)
              ? BREATHING_LED_MODE_RAINBOW
              : BREATHING_LED_MODE_BREATH;
         breathing_led_set_mode(mode);
-        ESP_LOGI(TAG, "Auto mode: %s", mode == BREATHING_LED_MODE_BREATH ? "breath" : "rainbow");
+        // ESP_LOGI(TAG, "Auto mode: %s", mode == BREATHING_LED_MODE_BREATH ? "breath" : "rainbow");
         vTaskDelay(pdMS_TO_TICKS(10000));
     }
 }
@@ -83,7 +83,7 @@ void music_status_task(void *pv)
 
     while (1) {
         if (tf_mounted()) {
-            ESP_LOGI(TAG, "SD card OK, music playing");
+            // ESP_LOGI(TAG, "SD card OK, music playing");
         }
         vTaskDelay(pdMS_TO_TICKS(5000));
     }

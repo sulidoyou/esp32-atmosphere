@@ -101,7 +101,7 @@ void breathing_led_task(void *pvParameters)
                 if (s_flash_ms == 0) {
                     // 闪光结束，恢复呼吸模式
                     s_mode = 0;
-                    ESP_LOGI(TAG, "LED flash done, restore breath mode");
+                    // ESP_LOGI(TAG, "LED flash done, restore breath mode");
                 }
             } else {
                 s_mode = 0;
@@ -173,7 +173,7 @@ void breathing_led_set_mode(uint8_t mode)
     // 允许0/1，其他值忽略
     if (mode > 1) return;
     s_mode = mode;
-    ESP_LOGI(TAG, "Mode set to: %s", mode == 0 ? "breath" : "rainbow");
+    // ESP_LOGI(TAG, "Mode set to: %s", mode == 0 ? "breath" : "rainbow");
 }
 
 // 鼓点闪光：调用后LED立即全亮，持续ms后自动恢复

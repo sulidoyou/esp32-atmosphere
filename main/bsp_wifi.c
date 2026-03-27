@@ -1,6 +1,8 @@
 #include "bsp_wifi.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_event.h"
 #include "esp_event_base.h"
 #include "nvs_flash.h"
@@ -45,6 +47,14 @@ static void ip_event_handler(void *arg, esp_event_base_t event_base,
 void bsp_wifi_init(void)
 {
     ESP_LOGI(TAG, "WiFi init...");
+
+    // 烧录后软件复位需要等待WiFi PHY稳定
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // 清理可能残留的WiFi状态
+    esp_wifi_disconnect();
+    esp_wifi_stop();
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     // 1. NVS
     esp_err_t ret = nvs_flash_init();
