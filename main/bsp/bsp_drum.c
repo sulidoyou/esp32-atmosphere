@@ -17,6 +17,7 @@ static const char *TAG = "DRUM";
 
 static drum_info_t s_drum = {
     .mode = DRUM_MODE_NONE,
+    .rhythm = RHYTHM_SINGLE,
     .bpm = 120,
     .velocity = 70,
     .left_drum_ch = LEFT_DRUM_CH,
@@ -148,7 +149,7 @@ static void beat_timer_callback(TimerHandle_t t)
     if (beat_ms < 50) beat_ms = 50;
     
     if (s_beat_timer == NULL) {
-        s_beat_timer = xTimerCreateStatic("beat", pdMS_TO_TICKS(beat_ms), pdTRUE, NULL, beat_timer_callback, &s_beat_timer_buf);
+        s_beat_timer = xTimerCreateStatic("beat", pdMS_TO_TICKS(beat_ms), pdFALSE, NULL, beat_timer_callback, &s_beat_timer_buf);
     } else {
         xTimerChangePeriod(s_beat_timer, pdMS_TO_TICKS(beat_ms), 0);
     }
@@ -280,6 +281,7 @@ void bsp_drum_set_rhythm(rhythm_type_t type)
 {
     if (type > RHYTHM_ROCK) type = RHYTHM_ROCK;
     s_current_rhythm = type;
+    s_drum.rhythm = type;  // 同步到info结构体
 }
 
 void bsp_drum_start(void)
