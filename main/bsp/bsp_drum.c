@@ -267,7 +267,8 @@ void bsp_drum_set_velocity(uint8_t vel)
     // 否则电磁铁来不及释放就被下一次 beat 打断
     // tick_ms = 60000 / BPM / 2，vel_ms = 50 + vel * 2.5
     uint16_t tick_ms = 60000 / s_drum.bpm / 2;
-    uint8_t max_vel = (tick_ms * 7 / 10 - 50) * 10 / 25;  // 70% 安全系数
+    // 使用int计算，避免高BPM时uint8_t负数溢出
+    int max_vel = (tick_ms * 7 / 10 - 50) * 10 / 25;  // 70% 安全系数
     if (max_vel < 10) max_vel = 10;
     if (vel > max_vel) {
         ESP_LOGW(TAG, "Velocity %d clamped to %d (BPM=%d, tick=%dms, max_allowed=%dms)",
