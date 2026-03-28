@@ -20,6 +20,9 @@ static const char *OTA_FILE = "/tf/ota_update.bin";
 static volatile bool s_ota_uploading = false;
 static volatile bool s_ota_flashing = false;
 
+// ============ 音乐状态追踪（减少无用日志）============
+static bool s_prev_playing = false;
+
 // ============ HTML ============
 static const char s_html[] =
 "<!DOCTYPE html>"
@@ -27,6 +30,7 @@ static const char s_html[] =
 "<head>"
 "<meta charset=UTF-8>"
 "<meta name=viewport content=width=device-width,initial-scale=1.0>"
+"<!-- build: " BUILD_DATE_STR " " BUILD_TIME_STR " -->"
 "<title>ESP32 氛围系统</title>"
 "<style>"
 "* { margin:0; padding:0; box-sizing:border-box; }"
@@ -110,6 +114,7 @@ static const char s_html[] =
 "<div class=g style=margin-top:5px>"
 "<button class=gray onclick=doit('next')>next</button>"
 "<button class=gray onclick=doit('stop')>stop</button>"
+"<button class=gray onclick=doit('reset')>重置</button>"
 "</div>"
 "<div class=vol>"
 "<span>vol</span>"
@@ -144,17 +149,14 @@ static const char s_html[] =
 
 "<div class=card><h2>🥁 敲鼓控制</h2>"
 "<div class=drum-row>"
-"<button class=drum-btn id=dm0 onclick='setDrumMode(0)'>关闭</button>"
-"<button class=drum-btn id=dm1 onclick='setDrumMode(1)'>预设</button>"
-"<button class=drum-btn id=dm3 onclick='setDrumMode(3)'>麦克风</button>"
-"<button class=drum-btn id=dm4 onclick='setDrumMode(4)'>音乐</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=0&r=0&bpm='+bpm+'&vel='+vel+'&a=stop').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStatus').textContent='模式: 关闭';document.getElementById('drumStartBtn').textContent='启动敲鼓';document.getElementById('drumStartBtn').className='drum-start';\">关闭</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=0&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 单击';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">单击</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=1&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 双击';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">双击</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=2&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 滚奏';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">滚奏</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=3&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 华尔兹';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">华尔兹</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=4&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 摇滚';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">摇滚</button>"
 "</div>"
 "<div class=drum-row style='margin-top:4px;'>"
-"<button class=drum-btn id=dr0 onclick='setDrumRhythm(0)'>单击</button>"
-"<button class=drum-btn id=dr1 onclick='setDrumRhythm(1)'>双击</button>"
-"<button class=drum-btn id=dr2 onclick='setDrumRhythm(2)'>滚奏</button>"
-"<button class=drum-btn id=dr3 onclick='setDrumRhythm(3)'>华尔兹</button>"
-"<button class=drum-btn id=dr4 onclick='setDrumRhythm(4)'>摇滚</button>"
 "</div>"
 "<div class=drum-ctrl>"
 "<span>BPM</span><input type=range id=drumBpm min=60 max=240 value=120 oninput=drumBpmVal.value=this.value><span id=drumBpmVal>120</span>"
@@ -162,7 +164,7 @@ static const char s_html[] =
 "<div class=drum-ctrl>"
 "<span>力度</span><input type=range id=drumVel min=10 max=100 value=70 oninput=drumVelVal.value=this.value><span id=drumVelVal>70</span>"
 "</div>"
-"<button class=drum-start id=drumStartBtn onclick='toggleDrum()'>启动敲鼓</button>"
+"<button class=drum-start id=drumStartBtn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=0&bpm='+bpm+'&vel='+vel+'&a=toggle').then(function(r){return r.json()}).then(function(d){if(d.running){document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';}else{document.getElementById('drumStartBtn').textContent='启动敲鼓';document.getElementById('drumStartBtn').className='drum-start';}document.getElementById('drumStatus').textContent='状态:'+(d.running?'运行':'停止')+'|节奏:'+d.rhythm+'|BPM:'+d.bpm+'|力度:'+d.vel;}).catch(function(){});\">启动敲鼓</button>"
 "<div class=drum-status id=drumStatus>状态: 停止 | 节拍: -- | 力度: --</div>"
 "</div>"
 
@@ -293,38 +295,15 @@ static const char s_html[] =
 "  var e2=document.getElementById('fwver');if(e2)e2.textContent=v;"
 "});"
 "setInterval(ping,8000);"
-"// ===== 敲鼓控制 ====="
-"var drumRunning=false;"
-"var drumMode=0, drumRhythm=0;"
-"function sendDrum(act){"
-"  var bpm=parseInt(document.getElementById('drumBpm').value);"
-"  var vel=parseInt(document.getElementById('drumVel').value);"
-"  var url='/drum?m='+drumMode+'&r='+drumRhythm+'&bpm='+bpm+'&vel='+vel+'&a='+act;"
-"  fetch(url).then(function(r){return r.json()}).then(function(d){"
-"    drumRunning=d.running;"
-"    var btn=document.getElementById('drumStartBtn');"
-"    if(d.running){btn.textContent='停止敲鼓';btn.className='drum-start running';}"
-"    else{btn.textContent='启动敲鼓';btn.className='drum-start';}"
-"    document.getElementById('drumStatus').textContent='状态:'+(d.running?'运行':'停止')+'|节奏:'+d.rhythm+'|BPM:'+d.bpm+'|力度:'+d.vel;});"
-"}"
-"function setDrumMode(m){"
-"  drumMode=m;"
-"  for(var i=0;i<5;i++){var b=document.getElementById('dm'+i);if(b){if(i===m)b.className='drum-btn active';else b.className='drum-btn';}}"
-"  if(m===0)sendDrum('stop');else sendDrum('start');"
-"}"
-"function setDrumRhythm(r){"
-"  drumRhythm=r;"
-"  for(var i=0;i<5;i++){var b=document.getElementById('dr'+i);if(b){if(i===r)b.className='drum-btn active';else b.className='drum-btn';}}"
-"  sendDrum('start');"
-"}"
-"function toggleDrum(){if(drumRunning)sendDrum('stop');else sendDrum('start');}"
-"setDrumMode(0);setDrumRhythm(0);"
 "</script>"
 "</body></html>";
 
 // ============ 路由回调 ============
 static esp_err_t root_cb(httpd_req_t *req)
 {
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    httpd_resp_set_hdr(req, "Expires", "0");
     httpd_resp_send(req, s_html, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
@@ -355,8 +334,25 @@ static esp_err_t music_cb(httpd_req_t *req)
     else if (strcmp(cmd, "stop") == 0) { music_pause(); strcpy(sta, "stopped"); }
     else if (strcmp(cmd, "next") == 0) { music_next(); strcpy(sta, "playing"); }
     else if (strcmp(cmd, "prev") == 0) { music_prev(); strcpy(sta, "playing"); }
+    else if (strcmp(cmd, "sel") == 0) {
+        char idx_str[8] = {0};
+        httpd_query_key_value(buf, "i", idx_str, sizeof(idx_str));
+        int sel_idx = atoi(idx_str);  // 用户看到的是1起始，传进来减1
+        if (sel_idx > 0) sel_idx--;  // UI传1起始
+        music_play_index(sel_idx);
+        strcpy(sta, "playing");
+    }
+    else if (strcmp(cmd, "reset") == 0) {
+        music_reset();
+        strcpy(sta, "playing");
+    }
 
-    ESP_LOGI(TAG, "MUSIC: cmd=%s, sta=%s, cur=%s", cmd, sta, cur);
+    // 只在状态真正变化时打印日志（开始/结束动作才记录，info polling不记录）
+    bool now_playing = (strcmp(sta, "playing") == 0);
+    if (strcmp(cmd, "info") != 0 || now_playing != s_prev_playing) {
+        ESP_LOGI(TAG, "MUSIC: cmd=%s, sta=%s, cur=%s", cmd, sta, cur);
+    }
+    s_prev_playing = now_playing;
 
     char resp[256];
     snprintf(resp, sizeof(resp), "{\"sta\":\"%s\",\"cur\":\"%s\",\"song\":\"%s\"}", sta, cur, song);
@@ -426,11 +422,15 @@ static esp_err_t drum_cb(httpd_req_t *req)
 {
     char buf[64] = {0}, ms[8] = {0}, rs[8] = {0}, bpm_s[8] = {0}, vel_s[8] = {0}, act[8] = {0};
     httpd_req_get_url_query_str(req, buf, sizeof(buf));
-    int m = atoi(httpd_query_key_value(buf, "m", ms, sizeof(ms)) == ESP_OK ? ms : "0");
-    int r = atoi(httpd_query_key_value(buf, "r", rs, sizeof(rs)) == ESP_OK ? rs : "0");
-    int bpm = atoi(httpd_query_key_value(buf, "bpm", bpm_s, sizeof(bpm_s)) == ESP_OK ? bpm_s : "120");
-    int vel = atoi(httpd_query_key_value(buf, "vel", vel_s, sizeof(vel_s)) == ESP_OK ? vel_s : "70");
+    httpd_query_key_value(buf, "m", ms, sizeof(ms));
+    httpd_query_key_value(buf, "r", rs, sizeof(rs));
+    httpd_query_key_value(buf, "bpm", bpm_s, sizeof(bpm_s));
+    httpd_query_key_value(buf, "vel", vel_s, sizeof(vel_s));
     httpd_query_key_value(buf, "a", act, sizeof(act));
+    int m = atoi(ms);
+    int r = atoi(rs);
+    int bpm = atoi(bpm_s);
+    int vel = atoi(vel_s);
 
     extern void bsp_drum_set_mode(drum_mode_t mode);
     extern void bsp_drum_set_bpm(uint8_t b);
@@ -440,23 +440,34 @@ static esp_err_t drum_cb(httpd_req_t *req)
     extern void bsp_drum_stop(void);
     extern void bsp_drum_get_info(drum_info_t *info);
 
-    drum_mode_t modes[5] = {DRUM_MODE_NONE, DRUM_MODE_PRESET, DRUM_MODE_MANUAL, DRUM_MODE_MIC_SYNC, DRUM_MODE_MUSIC_SYNC};
-    if (m < 0 || m > 4) m = 0;
-    rhythm_type_t rhythms[5] = {RHYTHM_SINGLE, RHYTHM_DOUBLE, RHYTHM_ROLL, RHYTHM_WALTZ, RHYTHM_ROCK};
-    if (r < 0 || r > 4) r = 0;
-    if (bpm < 60) bpm = 60;
-    if (bpm > 240) bpm = 240;
-    if (vel < 10) vel = 10;
-    if (vel > 100) vel = 100;
+    // 核心原则：只有 action=start 时才修改鼓参数和启动鼓。
+    // action=stop 时才停止鼓。
+    // action=query/toggle/空 时：只读状态，不修改任何东西（防止轮询误触发）。
 
-    bsp_drum_set_mode(modes[m]);
-    bsp_drum_set_rhythm(rhythms[r]);
-    bsp_drum_set_bpm(bpm);
-    bsp_drum_set_velocity(vel);
+    // 先读取当前状态（用于所有action）
+    drum_info_t info;
+    bsp_drum_get_info(&info);
 
-    bool running = false;
-    const char *action_str = "query";
     if (strcmp(act, "start") == 0) {
+        // 只有明确 action=start 才设置参数和启动鼓
+        drum_mode_t modes[5] = {DRUM_MODE_NONE, DRUM_MODE_PRESET, DRUM_MODE_MANUAL, DRUM_MODE_MIC_SYNC, DRUM_MODE_MUSIC_SYNC};
+        rhythm_type_t rhythms[5] = {RHYTHM_SINGLE, RHYTHM_DOUBLE, RHYTHM_ROLL, RHYTHM_WALTZ, RHYTHM_ROCK};
+        // 参数只在明确提供时才更新（atoi("")==0会误触发，所以要判断原始字符串非空）
+        if (ms[0] != '\0' && m >= 0 && m <= 4) bsp_drum_set_mode(modes[m]);
+        if (rs[0] != '\0' && r >= 0 && r <= 4) bsp_drum_set_rhythm(rhythms[r]);
+        if (bpm_s[0] != '\0') {
+            if (bpm < 60) bpm = 60;
+            if (bpm > 240) bpm = 240;
+            bsp_drum_set_bpm(bpm);
+        }
+        if (vel_s[0] != '\0') {
+            if (vel < 10) vel = 10;
+            if (vel > 100) vel = 100;
+            bsp_drum_set_velocity(vel);
+        }
+        bsp_drum_start();
+        bsp_drum_get_info(&info);  // 重新获取最新状态
+    } else if (strcmp(act, "stop") == 0) {
         bsp_drum_start();
         running = true;
         action_str = "start";
@@ -464,6 +475,17 @@ static esp_err_t drum_cb(httpd_req_t *req)
         bsp_drum_stop();
         running = false;
         action_str = "stop";
+    } else if (strcmp(act, "toggle") == 0) {
+        drum_info_t info;
+        bsp_drum_get_info(&info);
+        if (info.running) {
+            bsp_drum_stop();
+            running = false;
+        } else {
+            bsp_drum_start();
+            running = true;
+        }
+        action_str = running ? "toggle-start" : "toggle-stop";
     } else {
         // 查询状态
         drum_info_t info;
@@ -761,6 +783,7 @@ void bsp_http_server_start(void)
     cfg.server_port = 80;
     cfg.stack_size = 8192;
     cfg.lru_purge_enable = true;
+    cfg.max_uri_handlers = 32;  // 修复：默认只有8个，不够10个URI注册
 
     httpd_handle_t srv = NULL;
     esp_err_t err = httpd_start(&srv, &cfg);
@@ -770,16 +793,16 @@ void bsp_http_server_start(void)
     }
 
     httpd_uri_t uris[] = {
-        {"/",             HTTP_GET,  root_cb},
-        {"/m",            HTTP_GET,  music_cb},
-        {"/l",            HTTP_GET,  led_cb},
-        {"/v",            HTTP_GET,  vol_cb},
-        {"/g",            HTTP_GET,  magnet_cb},
-        {"/drum",         HTTP_GET,  drum_cb},
-        {"/api/version",  HTTP_GET,  version_cb},
-        {"/api/ota_info", HTTP_GET,  ota_info_cb},
-        {"/api/ota_upload", HTTP_POST, ota_upload_cb},
-        {"/api/ota_flash",  HTTP_POST, ota_flash_cb},
+        {"/",             HTTP_GET,  root_cb,      NULL},
+        {"/m",            HTTP_GET,  music_cb,     NULL},
+        {"/l",            HTTP_GET,  led_cb,       NULL},
+        {"/v",            HTTP_GET,  vol_cb,       NULL},
+        {"/g",            HTTP_GET,  magnet_cb,    NULL},
+        {"/drum",         HTTP_GET,  drum_cb,      NULL},
+        {"/api/version",  HTTP_GET,  version_cb,   NULL},
+        {"/api/ota_info", HTTP_GET,  ota_info_cb,  NULL},
+        {"/api/ota_upload", HTTP_POST, ota_upload_cb, NULL},
+        {"/api/ota_flash",  HTTP_POST, ota_flash_cb, NULL},
     };
 
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {

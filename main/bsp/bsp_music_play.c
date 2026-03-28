@@ -93,6 +93,24 @@ void music_prev(void)
     play_index(file_iterator_get_index(g_file_iterator));
 }
 
+void music_play_index(int idx)
+{
+    if (g_file_iterator == NULL) return;
+    size_t total = file_iterator_get_count(g_file_iterator);
+    if (idx < 0) idx = 0;
+    if (idx >= (int)total) idx = total - 1;
+    file_iterator_set_index(g_file_iterator, idx);
+    play_index(idx);
+}
+
+void music_reset(void)
+{
+    if (g_file_iterator == NULL) return;
+    int idx = file_iterator_get_index(g_file_iterator);
+    audio_player_stop();
+    play_index(idx);
+}
+
 // ==================== 内部实现 ====================
 
 // 声音处理函数
@@ -161,19 +179,25 @@ static void _audio_player_callback(audio_player_cb_ctx_t *ctx)
     case AUDIO_PLAYER_CALLBACK_EVENT_PLAYING: {
         pa_en(1);  // 打开功放
         // 音乐播放 → 自动启动鼓节奏（音乐同步模式）
-        extern void bsp_drum_set_mode(drum_mode_t mode);
-        extern void bsp_drum_start(void);
-        bsp_drum_set_mode(DRUM_MODE_MUSIC_SYNC);
-        bsp_drum_start();
+        // 若用户已锁定PRESET/MANUAL模式（SOURCE_USER），音乐无法接管
+        if (bsp_drum_set_mode_auto(DRUM_MODE_MUSIC_SYNC, DRUM_SOURCE_MUSIC)) {
+            bsp_drum_start();
+        }
         break;
     }
     case AUDIO_PLAYER_CALLBACK_EVENT_PAUSE: {
         pa_en(0);  // 关闭功放
-        // 音乐暂停 → 停止鼓节奏
-        extern void bsp_drum_stop(void);
-        bsp_drum_stop();
+        // 音乐暂停 → 仅停止音乐自己启动的鼓节奏
+        // 若鼓被用户锁定（SOURCE_USER），不干预
+        if (bsp_drum_get_source() == DRUM_SOURCE_MUSIC) {
+            bsp_drum_stop();
+        }
         break;
     }
+    case AUDIO_PLAYER_CALLBACK_EVENT_COMPLETED_PLAYING_NEXT:
+    case AUDIO_PLAYER_CALLBACK_EVENT_SHUTDOWN:
+    case AUDIO_PLAYER_CALLBACK_EVENT_UNKNOWN_FILE_TYPE:
+    case AUDIO_PLAYER_CALLBACK_EVENT_UNKNOWN:
     default:
         break;
     }

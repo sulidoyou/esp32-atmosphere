@@ -39,6 +39,7 @@ void bsp_init(void)
     bsp_key_init();           // 按键初始化
 
     bsp_wifi_init();          // WiFi连接（静态IP：192.168.0.247）
+    bsp_nextion_init();       // Nextion串口屏 (GPIO43/44)
 
     ESP_LOGI(TAG, "Board init done");
 }

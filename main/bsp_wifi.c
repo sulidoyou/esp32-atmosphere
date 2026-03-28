@@ -49,12 +49,12 @@ void bsp_wifi_init(void)
     ESP_LOGI(TAG, "WiFi init...");
 
     // 烧录后软件复位需要等待WiFi PHY稳定
-    vTaskDelay(pdMS_TO_TICKS(500));
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     // 清理可能残留的WiFi状态
     esp_wifi_disconnect();
     esp_wifi_stop();
-    vTaskDelay(pdMS_TO_TICKS(100));
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     // 1. NVS
     esp_err_t ret = nvs_flash_init();
@@ -120,7 +120,9 @@ void bsp_wifi_init(void)
     memset(&wifi_config, 0, sizeof(wifi_config));
     memcpy(wifi_config.sta.ssid, "freeluck6", 9);
     memcpy(wifi_config.sta.password, "freeluck520", 12);
-
+    wifi_config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+    wifi_config.sta.pmf_cfg.capable = true;
+    wifi_config.sta.pmf_cfg.required = false;
     ret = esp_wifi_set_mode(WIFI_MODE_STA);
     ret |= esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     ret |= esp_wifi_start();

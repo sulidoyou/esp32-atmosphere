@@ -25,6 +25,8 @@ void music_pause(void);
 void music_stop(void);
 void music_next(void);
 void music_prev(void);
+void music_play_index(int idx);  // 直接播放指定序号（0起始）
+void music_reset(void);           // 重置当前歌曲：停止并从头开始播放
 void music_set_volume(uint8_t vol);
 const char *music_get_current_name(void);
 void music_get_info(music_info_t *info);  // 获取完整播放信息

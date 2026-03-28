@@ -53,6 +53,7 @@
 #include "bsp_adc.h"
 #include "bsp_mic.h"
 #include "bsp_wifi.h"
+#include "bsp_nextion.h"
 
 void bsp_init(void);
 

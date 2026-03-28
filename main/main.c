@@ -5,9 +5,13 @@
 
 #include "bsp.h"
 #include "bsp_http_server.h"
+#include "bsp_nextion.h"
+#include "bsp_drum.h"
+#include "bsp_breathing_led.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "Atmosphere";
 
@@ -89,6 +93,63 @@ void music_status_task(void *pv)
     }
 }
 
+// ============ Nextion串口屏显示任务 ============
+// 鼓点回调适配器 (drum -> beat+bpm)
+static void _drum_hit_for_nextion(uint8_t drum)
+{
+    drum_info_t info;
+    bsp_drum_get_info(&info);
+    bsp_nextion_update_beat(drum, info.bpm);
+}
+
+void nextion_display_task(void *pv)
+{
+    (void)pv;
+    ESP_LOGI(TAG, "Nextion display task started");
+    
+    // 等待BSP完全初始化
+    vTaskDelay(pdMS_TO_TICKS(500));
+    
+    // 注册鼓点回调 (用于节拍可视化)
+    bsp_drum_set_hit_callback(_drum_hit_for_nextion);
+    
+    // 模式名称表 (与bsp_breathing_led.h一致)
+    const char *mode_names[] = {"Idle", "Breath", "Rainbow"};
+    const char *scene_names[] = {"Idle", "Game1", "Game2", "Party", "Relax"};
+    
+    while (1) {
+        // 读取鼓点状态
+        drum_info_t drum_info;
+        bsp_drum_get_info(&drum_info);
+        
+        // 更新系统状态 (呼吸灯模式)
+        uint8_t led_mode = breathing_led_get_mode();
+        bsp_nextion_update_system(drum_info.running, led_mode);
+        
+        // 更新网络状态
+        bool wifi_ok = WiFi_connected();
+        const char *ip = WiFi_getIP();
+        bsp_nextion_update_network(wifi_ok, ip);
+        
+        // 更新场景 (基于鼓点模式)
+        const char *scene_name = "Idle";
+        uint8_t scene_id = 0;
+        switch (drum_info.mode) {
+            case DRUM_MODE_PRESET:   scene_name = "Game1"; scene_id = 1; break;
+            case DRUM_MODE_MANUAL:   scene_name = "Game2"; scene_id = 2; break;
+            case DRUM_MODE_MIC_SYNC: scene_name = "Party"; scene_id = 3; break;
+            default:                 scene_name = "Idle";  scene_id = 0; break;
+        }
+        bsp_nextion_update_scene(scene_name, scene_id);
+        
+        // 更新BPM
+        bsp_nextion_update_bpm(drum_info.bpm);
+        
+        // 节拍可视化由鼓点任务回调触发，这里只更新运行状态
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
 // ============ 启动横幅 ============
 static void print_banner(void)
 {
@@ -100,6 +161,7 @@ static void print_banner(void)
     printf("  GPIO46: Breathing LED (LEDC PWM)\n");
     printf("  GPIO17/18/16/15: Magnet CH1-4\n");
     printf("  GPIO3:  Network LED\n");
+    printf("  GPIO43/44: Nextion LCD (115200)\n");
     printf("  SD:     CLK=47 CMD=48 D0=21\n");
     printf("  I2C:    SCL=2 SDA=1 (ES8311/PCA9557)\n");
     printf("  I2S:    MCLK=38 BCLK=14 WS=13\n");
@@ -127,6 +189,7 @@ void app_main(void)
     xTaskCreate(network_led_task,      "net_led",      4096, NULL, 3, NULL);
     xTaskCreate(atmosphere_mode_task,   "atmo_mode",    4096, NULL, 4, NULL);
     xTaskCreate(music_status_task,      "music_status", 4096, NULL, 2, NULL);
+    xTaskCreate(nextion_display_task,   "nextion_disp", 4096, NULL, 2, NULL);
 
     // HTTP服务器（网页控制面板）
     ESP_LOGI(TAG, "Starting HTTP server...");

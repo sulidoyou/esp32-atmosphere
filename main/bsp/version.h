@@ -22,4 +22,8 @@
 #define APP_VERSION_STR     "v" APP_VERSION_STRING
 #define APP_VERSION_FULL_STR "v" APP_VERSION_FULL
 
+// 编译时间戳（每次编译自动变化，用于HTML缓存清除）
+#define BUILD_DATE_STR __DATE__
+#define BUILD_TIME_STR __TIME__
+
 #endif  // __VERSION_H__
