@@ -1,5 +1,6 @@
 #include "bsp.h"
 #include "driver/ledc.h"
+#include "esp_task_wdt.h"
 
 #define BREATHING_LED_GPIO     GPIO_NUM_46
 #define BREATHING_LED_CHANNEL  LEDC_CHANNEL_0
@@ -23,6 +24,7 @@
 static const char *TAG = "BreathingLED";
 
 static uint8_t s_mode = 0;       // 0=呼吸, 1=彩虹, 2=鼓点闪
+static uint8_t s_pre_flash_mode = 0;  // 闪光前所在的模式，用于闪光结束后恢复
 static uint16_t s_hue = 0;        // 色相 0~359
 static uint8_t  s_brightness = 128;
 static int8_t   s_direction = 1;  // 1=渐亮, -1=渐暗
@@ -56,6 +58,7 @@ static void hsv_to_rgb(uint16_t h, uint8_t s, uint8_t v,
 void breathing_led_task(void *pvParameters)
 {
     (void)pvParameters;
+    esp_task_wdt_add(NULL);  // Bug fix: 订阅TWDT防止任务死锁
 
     ledc_timer_config_t timer_cfg = {
         .speed_mode = LEDC_LOW_SPEED_MODE,
@@ -86,25 +89,29 @@ void breathing_led_task(void *pvParameters)
 
     while (1) {
         if (s_mode == 2) {
-            // --- 鼓点闪光模式：全亮直到 flash_ms 耗尽 ---
+            // --- 鼓点闪光模式：非阻塞式渐灭 ---
+            // Bug fix: 原来使用 vTaskDelay(50) 阻塞50ms，期间无法检测模式变化
+            // 修复：每次循环只扣除一个步进(20ms)，每次循环都检查mode是否被外部改变
             if (s_flash_ms > 0) {
-                uint32_t flash_duty = (1 << LEDC_TIMER_8_BIT) - 1;  // 255
-                ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL,
-                                         flash_duty, 5);  // 5ms快速拉满
-                ledc_fade_start(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL, LEDC_FADE_NO_WAIT);
-                vTaskDelay(pdMS_TO_TICKS(s_flash_ms > 50 ? 50 : s_flash_ms));
-                if (s_flash_ms >= 50) {
-                    s_flash_ms -= 50;
+                if (s_flash_ms >= BREATH_STEP_MS) {
+                    // 闪光剩余时间还够一个完整步进：设置为全亮
+                    uint32_t flash_duty = (1 << LEDC_TIMER_8_BIT) - 1;  // 255
+                    ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL,
+                                             flash_duty, 5);  // 5ms快速拉满
+                    ledc_fade_start(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL, LEDC_FADE_NO_WAIT);
+                    s_flash_ms -= BREATH_STEP_MS;  // 只扣除一个步进，不阻塞
                 } else {
+                    // 闪光剩余时间不足一个步进：开始渐暗到0
+                    uint32_t flash_duty = (1 << LEDC_TIMER_8_BIT) - 1;  // 255
+                    ledc_set_fade_with_time(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL,
+                                             flash_duty / 2, s_flash_ms);  // 用剩余时间渐灭
+                    ledc_fade_start(LEDC_LOW_SPEED_MODE, BREATHING_LED_CHANNEL, LEDC_FADE_NO_WAIT);
                     s_flash_ms = 0;
                 }
-                if (s_flash_ms == 0) {
-                    // 闪光结束，恢复呼吸模式
-                    s_mode = 0;
-                    // ESP_LOGI(TAG, "LED flash done, restore breath mode");
-                }
-            } else {
-                s_mode = 0;
+            }
+            // 闪光结束后恢复到之前的模式（非阻塞判断，每次循环检查）
+            if (s_flash_ms == 0) {
+                s_mode = s_pre_flash_mode;
             }
         } else if (s_mode == 0) {
             // --- 呼吸模式 ---
@@ -179,6 +186,7 @@ void breathing_led_set_mode(uint8_t mode)
 // 鼓点闪光：调用后LED立即全亮，持续ms后自动恢复
 void breathing_led_flash(uint16_t ms)
 {
+    s_pre_flash_mode = s_mode;  // 保存闪光前的模式（呼吸或彩虹）
     s_flash_ms = ms;
     s_mode = 2;  // flash mode
     // ESP_LOGI(TAG, "LED flash: %ums", ms);

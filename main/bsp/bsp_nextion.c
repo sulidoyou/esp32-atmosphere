@@ -1,6 +1,6 @@
 /*
  * BSP - Nextion串口屏驱动
- * GPIO4=TX, GPIO5=RX (临时修改，ESP32-S3有效GPIO)
+ * GPIO43=TX, GPIO44=RX (ESP32-S3有效GPIO)
  * 波特率: 115200
  * 
  * Nextion协议:
@@ -60,6 +60,7 @@ static nextion_state_t s_state = {
 static const char* MODE_NAMES[] = {
     "Idle", "Breath", "Rainbow", "Preset", "Manual", "MicSync"
 };
+#define MODE_NAMES_COUNT (sizeof(MODE_NAMES)/sizeof(MODE_NAMES[0]))
 
 // 鼓点可视化命令 (内部)
 static void _update_text_component(const char *comp, const char *value)
@@ -112,9 +113,9 @@ void bsp_nextion_update_system(bool running, uint8_t mode)
         
         const char *status = running ? "Running" : "Stopped";
         _update_text_component("p0.t1", status);
-        _update_text_component("p0.t2", MODE_NAMES[mode < 6 ? mode : 0]);
+        _update_text_component("p0.t2", MODE_NAMES[mode < MODE_NAMES_COUNT ? mode : 0]);
         
-        ESP_LOGD(TAG, "System: %s, Mode: %s", status, MODE_NAMES[mode < 6 ? mode : 0]);
+        ESP_LOGD(TAG, "System: %s, Mode: %s", status, MODE_NAMES[mode < MODE_NAMES_COUNT ? mode : 0]);
     }
 }
 
@@ -188,7 +189,7 @@ void bsp_nextion_update_bpm(uint8_t bpm)
 void bsp_nextion_refresh(void)
 {
     _update_text_component("p0.t1", s_state.running ? "Running" : "Stopped");
-    _update_text_component("p0.t2", MODE_NAMES[s_state.mode < 6 ? s_state.mode : 0]);
+    _update_text_component("p0.t2", MODE_NAMES[s_state.mode < MODE_NAMES_COUNT ? s_state.mode : 0]);
     _update_text_component("p0.t3", s_state.network_ok ? s_state.ip_str : "Offline");
     _update_text_component("p0.t4", s_state.scene_name);
     _update_num_component("p0.n0", s_state.network_ok ? 1 : 0);
@@ -204,6 +205,13 @@ static void nextion_task(void *pv)
 {
     (void)pv;
     ESP_LOGI(TAG, "Nextion task started");
+    
+    // 安全检查：确保队列已创建
+    if (s_nextion_queue == NULL) {
+        ESP_LOGE(TAG, "Nextion queue is NULL, task exiting");
+        vTaskDelete(NULL);
+        return;
+    }
     
     // 初始化后等待屏幕启动
     vTaskDelay(pdMS_TO_TICKS(1000));
@@ -241,11 +249,18 @@ void bsp_nextion_init(void)
     ESP_ERROR_CHECK(uart_set_pin(NEXTION_UART_NUM, NEXTION_TX_GPIO, NEXTION_RX_GPIO, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
     ESP_ERROR_CHECK(uart_driver_install(NEXTION_UART_NUM, NEXTION_BUF_SIZE, NEXTION_BUF_SIZE, 0, NULL, 0));
     
-    // 创建队列
-    s_nextion_queue = xQueueCreate(4, sizeof(nextion_state_t));
+    // 创建队列（从4增到32，避免高速命令丢失）
+    s_nextion_queue = xQueueCreate(32, sizeof(nextion_state_t));
+    if (s_nextion_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create nextion queue");
+        // 队列创建失败不影响UART和任务创建，任务会检查NULL
+    }
     
     // 启动任务
-    xTaskCreate(nextion_task, "nextion", 4096, NULL, 3, NULL);
+    BaseType_t res = xTaskCreate(nextion_task, "nextion", 4096, NULL, 3, NULL);
+    if (res != pdTRUE) {
+        ESP_LOGE(TAG, "Failed to create nextion task");
+    }
     
     ESP_LOGI(TAG, "Nextion initialized");
 }

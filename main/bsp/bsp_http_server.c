@@ -12,9 +12,14 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "HTTP";
 static const char *OTA_FILE = "/tf/ota_update.bin";
+
+// ============ OTA互斥锁（防止竞态）============
+static SemaphoreHandle_t s_ota_lock = NULL;
 
 // ============ OTA状态（防止重入）============
 static volatile bool s_ota_uploading = false;
@@ -150,6 +155,7 @@ static const char s_html[] =
 "<div class=card><h2>🥁 敲鼓控制</h2>"
 "<div class=drum-row>"
 "<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=0&r=0&bpm='+bpm+'&vel='+vel+'&a=stop').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStatus').textContent='模式: 关闭';document.getElementById('drumStartBtn').textContent='启动敲鼓';document.getElementById('drumStartBtn').className='drum-start';\">关闭</button>"
+"<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=2&r=0&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='模式: 手动';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">手动</button>"
 "<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=0&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 单击';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">单击</button>"
 "<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=1&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 双击';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">双击</button>"
 "<button class=drum-btn onclick=\"var bpm=document.getElementById('drumBpm').value||120;var vel=document.getElementById('drumVel').value||70;fetch('/drum?m=1&r=2&bpm='+bpm+'&vel='+vel+'&a=start').catch(function(){});this.parentElement.querySelectorAll('.drum-btn').forEach(function(b){b.className='drum-btn';});this.className='drum-btn active';document.getElementById('drumStartBtn').textContent='停止敲鼓';document.getElementById('drumStartBtn').className='drum-start running';document.getElementById('drumStatus').textContent='节奏: 滚奏';document.getElementById('drumBpm').value=bpm;document.getElementById('drumBpmVal').textContent=bpm;document.getElementById('drumVel').value=vel;document.getElementById('drumVelVal').textContent=vel;\">滚奏</button>"
@@ -331,7 +337,7 @@ static esp_err_t music_cb(httpd_req_t *req)
 
     if (strcmp(cmd, "play") == 0) { music_play(); strcpy(sta, "playing"); }
     else if (strcmp(cmd, "pause") == 0) { music_pause(); strcpy(sta, "paused"); }
-    else if (strcmp(cmd, "stop") == 0) { music_pause(); strcpy(sta, "stopped"); }
+    else if (strcmp(cmd, "stop") == 0) { music_stop(); strcpy(sta, "stopped"); }
     else if (strcmp(cmd, "next") == 0) { music_next(); strcpy(sta, "playing"); }
     else if (strcmp(cmd, "prev") == 0) { music_prev(); strcpy(sta, "playing"); }
     else if (strcmp(cmd, "sel") == 0) {
@@ -427,15 +433,16 @@ static esp_err_t drum_cb(httpd_req_t *req)
     httpd_query_key_value(buf, "bpm", bpm_s, sizeof(bpm_s));
     httpd_query_key_value(buf, "vel", vel_s, sizeof(vel_s));
     httpd_query_key_value(buf, "a", act, sizeof(act));
-    int m = atoi(ms);
-    int r = atoi(rs);
-    int bpm = atoi(bpm_s);
-    int vel = atoi(vel_s);
+    int m = (int)strtol(ms, NULL, 10);
+    int r = (int)strtol(rs, NULL, 10);
+    int bpm = (int)strtol(bpm_s, NULL, 10);
+    int vel = (int)strtol(vel_s, NULL, 10);
 
     extern void bsp_drum_set_mode(drum_mode_t mode);
     extern void bsp_drum_set_bpm(uint8_t b);
     extern void bsp_drum_set_velocity(uint8_t v);
     extern void bsp_drum_set_rhythm(rhythm_type_t rt);
+    extern void bsp_drum_set_fire_limit(uint8_t limit);
     extern void bsp_drum_start(void);
     extern void bsp_drum_stop(void);
     extern void bsp_drum_get_info(drum_info_t *info);
@@ -448,13 +455,17 @@ static esp_err_t drum_cb(httpd_req_t *req)
     drum_info_t info;
     bsp_drum_get_info(&info);
 
+    // 声明结果变量（避免goto清理代码）
+    bool drum_running = false;
+    int resp_mode = 0, resp_rhythm = 0, resp_bpm = 0, resp_vel = 0;
+
     if (strcmp(act, "start") == 0) {
         // 只有明确 action=start 才设置参数和启动鼓
         drum_mode_t modes[5] = {DRUM_MODE_NONE, DRUM_MODE_PRESET, DRUM_MODE_MANUAL, DRUM_MODE_MIC_SYNC, DRUM_MODE_MUSIC_SYNC};
         rhythm_type_t rhythms[5] = {RHYTHM_SINGLE, RHYTHM_DOUBLE, RHYTHM_ROLL, RHYTHM_WALTZ, RHYTHM_ROCK};
-        // 参数只在明确提供时才更新（atoi("")==0会误触发，所以要判断原始字符串非空）
-        if (ms[0] != '\0' && m >= 0 && m <= 4) bsp_drum_set_mode(modes[m]);
-        if (rs[0] != '\0' && r >= 0 && r <= 4) bsp_drum_set_rhythm(rhythms[r]);
+        // 参数只在明确提供时才更新（strtol("")==0，需判断原始字符串非空）
+        if (ms[0] != '\0' && m >= 0 && m < (int)(sizeof(modes)/sizeof(modes[0]))) bsp_drum_set_mode(modes[m]);
+        if (rs[0] != '\0' && r >= 0 && r < (int)(sizeof(rhythms)/sizeof(rhythms[0]))) bsp_drum_set_rhythm(rhythms[r]);
         if (bpm_s[0] != '\0') {
             if (bpm < 60) bpm = 60;
             if (bpm > 240) bpm = 240;
@@ -465,45 +476,68 @@ static esp_err_t drum_cb(httpd_req_t *req)
             if (vel > 100) vel = 100;
             bsp_drum_set_velocity(vel);
         }
+        // 根据节奏类型设置 fire_limit：单击=1次，双击=2次，其他=节奏周期数
+        rhythm_type_t fire_limit_rhythm = (rs[0] != '\0') ? rhythms[r] : info.rhythm;
+        uint8_t fire_limit_map[5] = {1, 2, 4, 3, 4};  // 单击,双击,滚奏,华尔兹,摇滚
+        bsp_drum_set_fire_limit(fire_limit_map[fire_limit_rhythm]);
         bsp_drum_start();
         bsp_drum_get_info(&info);  // 重新获取最新状态
     } else if (strcmp(act, "stop") == 0) {
-        bsp_drum_start();
-        running = true;
-        action_str = "start";
-    } else if (strcmp(act, "stop") == 0) {
         bsp_drum_stop();
-        running = false;
-        action_str = "stop";
-    } else if (strcmp(act, "toggle") == 0) {
-        drum_info_t info;
         bsp_drum_get_info(&info);
+    } else if (strcmp(act, "toggle") == 0) {
         if (info.running) {
             bsp_drum_stop();
-            running = false;
         } else {
             bsp_drum_start();
-            running = true;
         }
-        action_str = running ? "toggle-start" : "toggle-stop";
-    } else {
-        // 查询状态
-        drum_info_t info;
         bsp_drum_get_info(&info);
-        running = info.running;
+    } else {
+        // 查询状态（action=query/空/其他）- 只读，不修改鼓状态
+        bsp_drum_get_info(&info);
     }
 
-    const char *mode_names[5] = {"关闭","预设","手动","麦克风","音乐"};
+    // 构建响应（使用info中的实际值，不是解析的原始参数）
+    drum_running = info.running;
+    resp_mode    = info.mode;
+    resp_rhythm  = info.rhythm;
+    resp_bpm     = info.bpm;
+    resp_vel     = info.velocity;
+
+    const char *mode_names[5]   = {"关闭","预设","手动","麦克风","音乐"};
     const char *rhythm_names[5] = {"单击","双击","滚奏","华尔兹","摇滚"};
-    ESP_LOGI(TAG, "DRUM: mode=%s, rhythm=%s, bpm=%d, vel=%d, action=%s, running=%s",
-             mode_names[m], rhythm_names[r], bpm, vel, action_str, running ? "true" : "false");
-    
+
+    // 安全边界检查（防御性编程）
+    if (resp_mode < 0) resp_mode = 0;
+    if (resp_mode >= (int)(sizeof(mode_names)/sizeof(mode_names[0]))) resp_mode = 0;
+    if (resp_rhythm < 0) resp_rhythm = 0;
+    if (resp_rhythm >= (int)(sizeof(rhythm_names)/sizeof(rhythm_names[0]))) resp_rhythm = 0;
+
     char resp[128];
     int len = snprintf(resp, sizeof(resp),
         "{\"running\":%s,\"mode\":%d,\"rhythm\":\"%s\",\"bpm\":%d,\"vel\":%d}",
-        running ? "true" : "false", m, rhythm_names[r], bpm, vel);
+        drum_running ? "true" : "false",
+        resp_mode,
+        rhythm_names[resp_rhythm],
+        resp_bpm,
+        resp_vel);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, len);
+    return ESP_OK;
+}
+
+// ============ 中奖/游戏事件回调 ============
+static esp_err_t win_cb(httpd_req_t *req)
+{
+    // 游戏机触发中奖时调用此API
+    // 触发祝贺音效（<50ms响应，音效预加载在PSRAM中）
+    extern void bsp_music_trigger_win(void);
+    bsp_music_trigger_win();
+
+    ESP_LOGI(TAG, "WIN event triggered via HTTP");
+
+    httpd_resp_set_type(req, "application/json");
+    httpd_resp_send(req, "{\"ok\":1,\"event\":\"win\"}", 26);
     return ESP_OK;
 }
 
@@ -543,12 +577,19 @@ static esp_err_t ota_info_cb(httpd_req_t *req)
 // 上传固件到SD卡（防重入）
 static esp_err_t ota_upload_cb(httpd_req_t *req)
 {
-    // 防重入：正在上传中则拒绝
+    // 防重入：使用互斥锁
+    if (s_ota_lock == NULL || xSemaphoreTake(s_ota_lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        httpd_resp_send(req, "Server busy", -1);
+        return ESP_FAIL;
+    }
+    
     if (s_ota_uploading) {
+        xSemaphoreGive(s_ota_lock);
         httpd_resp_send(req, "Upload already in progress", -1);
         return ESP_FAIL;
     }
     s_ota_uploading = true;
+    xSemaphoreGive(s_ota_lock);  // 释放锁，但标记状态
 
     size_t content_len = req->content_len;
     if (content_len > 2 * 1024 * 1024) {
@@ -608,11 +649,19 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
 {
     (void)req;  // unused
 
+    // 防重入：使用互斥锁
+    if (s_ota_lock == NULL || xSemaphoreTake(s_ota_lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        httpd_resp_send(req, "Server busy", -1);
+        return ESP_FAIL;
+    }
+    
     if (s_ota_flashing) {
+        xSemaphoreGive(s_ota_lock);
         httpd_resp_send(req, "Flash already in progress", -1);
         return ESP_FAIL;
     }
     s_ota_flashing = true;
+    xSemaphoreGive(s_ota_lock);
 
     // 检查OTA分区是否存在
     const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
@@ -690,6 +739,21 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
         httpd_resp_send(req, "esp_ota_begin failed", -1);
         return ESP_FAIL;
     }
+
+#ifdef CONFIG_SECURE_BOOT_V2_ENABLED
+    // 安全验证：若启用了Secure Boot V2，验证OTA镜像签名
+    // 防止恶意固件被烧录
+    err = esp_ota_verify_signature(update_partition, ota_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "OTA signature verification FAILED: %s", esp_err_to_name(err));
+        esp_ota_abort(ota_handle);
+        close(fd);
+        s_ota_flashing = false;
+        httpd_resp_send(req, "OTA signature verification failed - secure boot enabled, rejecting unsigned image", -1);
+        return ESP_FAIL;
+    }
+    ESP_LOGI(TAG, "OTA: Secure Boot V2 signature verified OK");
+#endif
 
     ESP_LOGI(TAG, "OTA: writing to partition %s", update_partition->label);
 
@@ -779,6 +843,12 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
 // ============ 启动 ============
 void bsp_http_server_start(void)
 {
+    // 创建OTA互斥锁
+    s_ota_lock = xSemaphoreCreateMutex();
+    if (s_ota_lock == NULL) {
+        ESP_LOGE(TAG, "Failed to create OTA lock");
+    }
+    
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 80;
     cfg.stack_size = 8192;
@@ -799,6 +869,7 @@ void bsp_http_server_start(void)
         {"/v",            HTTP_GET,  vol_cb,       NULL},
         {"/g",            HTTP_GET,  magnet_cb,    NULL},
         {"/drum",         HTTP_GET,  drum_cb,      NULL},
+        {"/win",          HTTP_GET,  win_cb,       NULL},
         {"/api/version",  HTTP_GET,  version_cb,   NULL},
         {"/api/ota_info", HTTP_GET,  ota_info_cb,  NULL},
         {"/api/ota_upload", HTTP_POST, ota_upload_cb, NULL},

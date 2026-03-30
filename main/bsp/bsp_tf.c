@@ -27,7 +27,11 @@ esp_err_t tf_mount(void)
     setlocale(LC_ALL, "zh_CN.UTF-8");
     // 2.MMC 主机配置
     sdmmc_host_t host = SDMMC_HOST_DEFAULT(); // 获取SDMMC主机默认配置
-    host.flags = SDMMC_HOST_FLAG_1BIT;        // 设置为1线模式
+    // P0-2 fix: 使用|=保留默认flags(如DDR/DEINIT等)，只添加1BIT标志位
+    host.flags |= SDMMC_HOST_FLAG_1BIT;       // 添加1线模式标志，保留其他默认flags
+    // SDMMC_HOST_DEFAULT() -> max_freq_khz = SDMMC_FREQ_DEFAULT = 20MHz
+    // 对于1-bit SDMMC模式，20MHz是稳定且充足的频率
+    // 注意：SDMMC_FREQ_DEFAULT在ESP-IDF v5.5中定义为20000(20MHz)，不是40MHz
     // 3.MMC 接口配置
     sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT(); // 获取SDMMC槽默认配置
     slot_config.width = 1;                                         // 1线模式
@@ -72,7 +76,7 @@ esp_err_t tf_unmount(void)
         _tf_card_info = NULL;
     }
     else
-        ESP_LOGW(TF_TAG, "mount failure %d", ret);
+        ESP_LOGW(TF_TAG, "mount failure: %s", esp_err_to_name(ret));
     return ret;
 }
 

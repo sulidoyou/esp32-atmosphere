@@ -2,6 +2,8 @@
 #include "esp_timer.h"
 #include "driver/gpio.h"
 #include "freertos/portmacro.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 
 static const char *TAG = "MAGNET";
 
@@ -17,8 +19,11 @@ static const gpio_num_t g_gpio[MAGNET_CH_COUNT] = {
 };
 
 // 每路结束时间（0=未激活）
-// volatile保证多核/中断上下文中可见性
+// volatile保证多核可见性
 static volatile int64_t g_end_time[MAGNET_CH_COUNT] = {0};
+
+// 临界区信号量（保护g_end_time跨任务/中断访问）
+static SemaphoreHandle_t s_mag_lock = NULL;
 
 // 初始化标志
 static bool s_initialized = false;
@@ -30,14 +35,18 @@ static void mag_tick_cb(void *param)
     int64_t now_ms = esp_timer_get_time() / 1000;
 
     for (int ch = 0; ch < MAGNET_CH_COUNT; ch++) {
+        // 使用临界区保护g_end_time读取和写入
+        // ESP32的esp_timer在CPU core 0的高优先级任务中执行
+        // 主任务可能在CPU core 1上运行，需要互斥保护
+        if (s_mag_lock == NULL) continue;  // 防御：锁未初始化则跳过
+        if (xSemaphoreTake(s_mag_lock, 0) != pdTRUE) continue;  // 获取不到锁则跳过本次
+
         int64_t end = g_end_time[ch];
         if (end > 0 && now_ms >= end) {
-            // 原子操作：g_end_time[ch] = 0
-            // 使用内联汇编保证read-modify-write原子性
-            // (int64_t赋值在32位系统上不是天然原子的，需要临界区)
-            g_end_time[ch] = 0;  // 写操作，gcc产生的指令在ESP32上是原子的
+            g_end_time[ch] = 0;
             gpio_set_level(g_gpio[ch], 0);
         }
+        xSemaphoreGive(s_mag_lock);
     }
 }
 
@@ -49,12 +58,16 @@ void magent_fire_ch_with_ms(int ch, int ms)
 
     int64_t now_ms = esp_timer_get_time() / 1000;
 
-    // 设置结束时间和GPIO电平均在主任务中完成
-    // esp_timer回调是硬件定时器触发，不会有并发的同一通道调用
-    // 故不需要额外临界区保护
+    // 使用临界区保护g_end_time写入
+    // 防止和esp_timer回调产生竞态
+    if (s_mag_lock != NULL) {
+        xSemaphoreTake(s_mag_lock, portMAX_DELAY);
+    }
     g_end_time[ch] = now_ms + ms;
     gpio_set_level(g_gpio[ch], 1);
-    // ESP_LOGI(TAG, "[%lldms] CH%d HIGH | GPIO=%d | %dms", now_ms, ch+1, (int)g_gpio[ch], ms);
+    if (s_mag_lock != NULL) {
+        xSemaphoreGive(s_mag_lock);
+    }
 }
 
 void magent_fire_ch(int ch)
@@ -73,6 +86,13 @@ void bsp_magent_init(void)
 {
     if (s_initialized) {
         ESP_LOGW(TAG, "Already initialized, skipping");
+        return;
+    }
+
+    // 创建临界区信号量（使用互斥锁，比二值信号量更安全）
+    s_mag_lock = xSemaphoreCreateMutex();
+    if (s_mag_lock == NULL) {
+        ESP_LOGE(TAG, "Failed to create mutex");
         return;
     }
 

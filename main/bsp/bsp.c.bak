@@ -19,8 +19,11 @@ void bsp_init(void)
     esp_log_level_set("I2S_IF",       ESP_LOG_WARN);
 
     // ========== 电磁铁最先初始化，防止上电乱拍 ==========
-    // bsp_magent_init()会设置所有GPIO为OUTPUT并关闭
-    bsp_magent_init();
+    bsp_magent_init();         // 电磁铁GPIO（4路）
+    bsp_magent_fire(0, 0);    // CH0关闭
+    bsp_magent_fire(1, 0);    // CH1关闭
+    bsp_magent_fire(2, 0);    // CH2关闭
+    bsp_magent_fire(3, 0);    // CH3关闭
     ESP_LOGI(TAG, "Magnet: all OFF (anti-power-on glitch)");
     // ========== 电磁铁初始化完成 ==========
 

@@ -158,8 +158,10 @@ static void play_index(int index)
         strncpy(g_current_fname, fname, sizeof(g_current_fname) - 1);
         g_current_fname[sizeof(g_current_fname) - 1] = '\0';
         ESP_LOGI(TAG, "Playing '%s'", g_current_fname);
+        // audio_player_play后，audio_player会异步读取数据
+        // 读取完成后audio_player内部会关闭fp，这里不需要也不应该fclose
+        // 否则会导致audio_player读取时fd已关闭
         audio_player_play(fp);
-        // 注意：不在这里fclose！audio_player内部异步读取
     } else {
         ESP_LOGE(TAG, "unable to open index %d, filename '%s'", index, filename);
     }

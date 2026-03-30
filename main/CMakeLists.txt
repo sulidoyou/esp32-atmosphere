@@ -11,6 +11,7 @@ idf_component_register(SRCS
                             "bsp/bsp_pca9557.c"
                             "bsp/bsp_tf.c"
                             "bsp/bsp_music_play.c"
+                            "bsp/bsp_music_play_freertos.c"
                             "bsp/bsp_led.c"
                             "bsp/bsp_breathing_led.c"
                             "bsp/bsp_magent.c"

@@ -32,6 +32,7 @@ typedef enum {
 // 鼓信息结构
 typedef struct {
     drum_mode_t mode;
+    rhythm_type_t rhythm;  // 当前节奏类型
     uint8_t bpm;
     uint8_t velocity;
     uint8_t left_drum_ch;

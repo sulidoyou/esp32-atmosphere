@@ -44,6 +44,7 @@
 #include "bsp_pca9557.h"
 #include "bsp_tf.h"
 #include "bsp_music_play.h"
+#include "bsp_music_play_freertos.h"
 #include "bsp_led.h"
 #include "bsp_magent.h"
 #include "bsp_drum.h"

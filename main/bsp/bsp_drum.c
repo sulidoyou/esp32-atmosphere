@@ -82,6 +82,13 @@ void drum_task(void *pv)
     drum_hit_req_t req;
     extern void breathing_led_flash(uint16_t flash_ms);
     
+    // 安全检查：确保队列已创建
+    if (s_drum_queue == NULL) {
+        ESP_LOGE(TAG, "Drum queue is NULL, task exiting");
+        vTaskDelete(NULL);
+        return;
+    }
+    
     while (1) {
         if (xQueueReceive(s_drum_queue, &req, portMAX_DELAY) == pdTRUE) {
             // 安全检查：只有非NONE模式才执行
@@ -104,10 +111,9 @@ void drum_task(void *pv)
     }
 }
 
-static uint16_t velocity_to_ms(uint8_t vel)
-{
-    return 50 + (vel * 250 / 100);
-}
+// velocity_to_ms: 将力度(0-100)转换为通电时长(ms)
+// 注意：该函数已不再使用，实际时长在drum_task中直接计算
+// static uint16_t velocity_to_ms(uint8_t vel) { return 50 + (vel * 250 / 100); }
 
 // 定时器回调（极轻量，只发队列，不做实际工作）
 static void stop_timer(void);  // forward declaration
@@ -132,19 +138,35 @@ static void beat_timer_callback(TimerHandle_t t)
         // 拍掌：两边同时敲，分两次队列发送
         drum_hit_req_t req_l = {.drum = LEFT_DRUM_CH, .velocity = s_drum.velocity};
         drum_hit_req_t req_r = {.drum = RIGHT_DRUM_CH, .velocity = s_drum.velocity};
-        xQueueSend(s_drum_queue, &req_l, 0);
-        xQueueSend(s_drum_queue, &req_r, 0);
+        // P0-4 fix: use portMAX_DELAY to prevent silent drop when queue is full
+        BaseType_t ret1 = xQueueSend(s_drum_queue, &req_l, portMAX_DELAY);
+        BaseType_t ret2 = xQueueSend(s_drum_queue, &req_r, portMAX_DELAY);
+        if (ret1 != pdTRUE || ret2 != pdTRUE) {
+            ESP_LOGW(TAG, "beat=3 queue send failed: L=%d R=%d", ret1, ret2);
+        }
         s_fires_fired += 2;  // 算2次触发
     } else if (beat > 0) {
         drum_hit_req_t req = {
             .drum = (beat == 1) ? RIGHT_DRUM_CH : LEFT_DRUM_CH,
             .velocity = s_drum.velocity
         };
-        xQueueSend(s_drum_queue, &req, 0);
+        // P0-4 fix: use portMAX_DELAY instead of 0 to prevent silent drop
+        // when queue is temporarily full (e.g. beat=3 sends two items in succession)
+        BaseType_t ret = xQueueSend(s_drum_queue, &req, portMAX_DELAY);
+        if (ret != pdTRUE) {
+            ESP_LOGW(TAG, "Queue send failed for beat=%d", beat);
+        }
         s_fires_fired++;
     }
     
     s_beat_index++;
+    
+    // 达到 fire_limit，停止定时器（不重启）让鼓自动停止
+    if (s_fire_limit > 0 && s_fires_fired >= s_fire_limit) {
+        stop_timer();
+        return;
+    }
+    
     uint32_t beat_ms = BEAT_MS(s_drum.bpm) / 2;
     if (beat_ms < 50) beat_ms = 50;
     
@@ -174,8 +196,14 @@ void bsp_drum_init(void)
     // 创建鼓点队列
     s_drum_queue = xQueueCreate(8, sizeof(drum_hit_req_t));
     if (s_drum_queue != NULL) {
-        xTaskCreate(drum_task, "drum_proc", 4096, NULL, 3, NULL);
-        ESP_LOGI(TAG, "Drum task started");
+        BaseType_t res = xTaskCreate(drum_task, "drum_proc", 4096, NULL, 3, NULL);
+        if (res == pdTRUE) {
+            ESP_LOGI(TAG, "Drum task started");
+        } else {
+            ESP_LOGE(TAG, "Failed to create drum task");
+        }
+    } else {
+        ESP_LOGE(TAG, "Failed to create drum queue");
     }
     
     s_init_done = true;  // 初始化完成，允许music回调接管
@@ -319,7 +347,11 @@ void bsp_drum_hit(uint8_t drum)
         .drum = (drum == 0) ? LEFT_DRUM_CH : RIGHT_DRUM_CH,
         .velocity = s_drum.velocity
     };
-    xQueueSend(s_drum_queue, &req, 0);
+    // P0-4 fix: use portMAX_DELAY to prevent silent drop
+    BaseType_t ret = xQueueSend(s_drum_queue, &req, portMAX_DELAY);
+    if (ret != pdTRUE) {
+        ESP_LOGW(TAG, "bsp_drum_hit queue send failed");
+    }
 }
 
 bool bsp_drum_is_mic_sync_mode(void)

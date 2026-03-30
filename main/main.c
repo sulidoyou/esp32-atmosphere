@@ -11,6 +11,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_task_wdt.h"
 #include "driver/gpio.h"
 
 static const char *TAG = "Atmosphere";
@@ -20,6 +21,7 @@ static const char *TAG = "Atmosphere";
 void network_led_task(void *pv)
 {
     (void)pv;
+    esp_task_wdt_add(NULL);  // 订阅TWDT
     ESP_LOGI(TAG, "Network LED task started");
 
     gpio_config_t io_conf = {
@@ -65,6 +67,7 @@ void network_led_task(void *pv)
 void atmosphere_mode_task(void *pv)
 {
     (void)pv;
+    esp_task_wdt_add(NULL);  // Bug fix: 订阅TWDT
     ESP_LOGI(TAG, "Auto mode switch task started");
 
     while (1) {
@@ -105,6 +108,7 @@ static void _drum_hit_for_nextion(uint8_t drum)
 void nextion_display_task(void *pv)
 {
     (void)pv;
+    esp_task_wdt_add(NULL);  // Bug fix: 订阅TWDT
     ESP_LOGI(TAG, "Nextion display task started");
     
     // 等待BSP完全初始化
@@ -179,17 +183,53 @@ void app_main(void)
     bsp_init();
     ESP_LOGI(TAG, "BSP init done");
 
+    // ============ TWDT 看门狗初始化（Bug fix: 防止系统死机）============
+    // 配置：超时10秒，订阅当前任务和CPU IDLE任务
+    // 注意：menuconfig中需启用CONFIG_ESP_TASK_WDT_EN=y
+    // 如果CONFIG_ESP_TASK_WDT_EN未启用，esp_task_wdt_init会返回ESP_ERR_INVALID_STATE
+    esp_task_wdt_config_t twdt_config = {
+        .timeout_ms = 10000,
+        .idle_core_mask = 0,  // 不自动订阅IDLE任务，由各任务自行订阅
+    };
+    esp_err_t twdt_err = esp_task_wdt_init(&twdt_config);
+    if (twdt_err == ESP_OK) {
+        ESP_LOGI(TAG, "TWDT initialized: timeout=10s");
+        // 订阅主任务（防止主任务死循环）
+        esp_task_wdt_add(NULL);
+    } else if (twdt_err == ESP_ERR_INVALID_STATE) {
+        ESP_LOGW(TAG, "TWDT already initialized by menuconfig (ESP_ERR_INVALID_STATE)");
+        // 如果menuconfig已启用TWDT，仍然添加主任务
+        esp_task_wdt_add(NULL);
+    } else {
+        ESP_LOGE(TAG, "TWDT init failed: %s", esp_err_to_name(twdt_err));
+    }
+
     if (tf_mounted()) {
         ESP_LOGI(TAG, "SD card detected");
     } else {
         ESP_LOGE(TAG, "SD card NOT detected!");
     }
 
-    // 启动各任务
-    xTaskCreate(network_led_task,      "net_led",      4096, NULL, 3, NULL);
-    xTaskCreate(atmosphere_mode_task,   "atmo_mode",    4096, NULL, 4, NULL);
-    xTaskCreate(music_status_task,      "music_status", 4096, NULL, 2, NULL);
-    xTaskCreate(nextion_display_task,   "nextion_disp", 4096, NULL, 2, NULL);
+    // FreeRTOS多任务音乐播放系统初始化
+    // 在bsp_init()（包含mp3_palyer_init()）之后初始化
+    // 支持音效中断（祝贺音<50ms响应）和背景音乐并行播放
+    ESP_LOGI(TAG, "Initializing FreeRTOS music system...");
+    if (bsp_music_freertos_init() == ESP_OK) {
+        ESP_LOGI(TAG, "FreeRTOS music system init OK");
+    } else {
+        ESP_LOGE(TAG, "FreeRTOS music system init FAILED!");
+    }
+
+    // 启动各任务（均检查返回值，任务创建失败应报警）
+    BaseType_t x;
+    x = xTaskCreate(network_led_task,      "net_led",      4096, NULL, 3, NULL);
+    if (x != pdPASS) { ESP_LOGE(TAG, "FAIL create net_led (ret=%d)", x); }
+    x = xTaskCreate(atmosphere_mode_task,  "atmo_mode",    4096, NULL, 4, NULL);
+    if (x != pdPASS) { ESP_LOGE(TAG, "FAIL create atmo_mode (ret=%d)", x); }
+    x = xTaskCreate(music_status_task,     "music_status", 4096, NULL, 2, NULL);
+    if (x != pdPASS) { ESP_LOGE(TAG, "FAIL create music_status (ret=%d)", x); }
+    x = xTaskCreate(nextion_display_task,  "nextion_disp", 4096, NULL, 2, NULL);
+    if (x != pdPASS) { ESP_LOGE(TAG, "FAIL create nextion_disp (ret=%d)", x); }
 
     // HTTP服务器（网页控制面板）
     ESP_LOGI(TAG, "Starting HTTP server...");

@@ -49,7 +49,7 @@ void bsp_wifi_init(void)
     ESP_LOGI(TAG, "WiFi init...");
 
     // 烧录后软件复位需要等待WiFi PHY稳定
-    vTaskDelay(pdMS_TO_TICKS(2500));
+    vTaskDelay(pdMS_TO_TICKS(1000));
 
     // 清理可能残留的WiFi状态
     esp_wifi_disconnect();
