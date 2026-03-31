@@ -132,8 +132,7 @@ void bsp_magent_init(void)
     }
 
     s_initialized = true;
-    ESP_LOGI(TAG, "Init OK | period=%dus | GPIOs: %d,%d,%d,%d",
+    ESP_LOGI(TAG, "Init OK | period=%dus | CH1-4 GPIOs: %d,%d,%d,%d",
              MAGNET_TIMER_PERIOD_US,
-             Magent1_GPIO_NUM, Magent2_GPIO_NUM,
-             Magent3_GPIO_NUM, Magent4_GPIO_NUM);
+             g_gpio[0], g_gpio[1], g_gpio[2], g_gpio[3]);
 }

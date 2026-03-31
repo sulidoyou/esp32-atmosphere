@@ -14,6 +14,8 @@
 static const char *TAG = "WiFi";
 static bool s_connected = false;
 static char s_ip_str[20] = {0};
+static bool s_wifi_started = false;
+static TickType_t s_last_reconnect_tick = 0;
 
 // 设备静态IP配置（需要和路由器在同一网段）
 #define DEVICE_IP      "192.168.0.247"
@@ -26,10 +28,15 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
     if (event_id == WIFI_EVENT_STA_START) {
+        s_wifi_started = true;
+        s_last_reconnect_tick = xTaskGetTickCount();
         esp_wifi_connect();
     } else if (event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        wifi_event_sta_disconnected_t *event = (wifi_event_sta_disconnected_t *)event_data;
         s_connected = false;
-        ESP_LOGI(TAG, "WiFi disconnected");
+        ESP_LOGW(TAG, "WiFi disconnected, reason=%d, reconnecting...", event ? event->reason : -1);
+        s_last_reconnect_tick = xTaskGetTickCount();
+        esp_wifi_connect();
     }
 }
 
@@ -50,11 +57,6 @@ void bsp_wifi_init(void)
 
     // 烧录后软件复位需要等待WiFi PHY稳定
     vTaskDelay(pdMS_TO_TICKS(2500));
-
-    // 清理可能残留的WiFi状态
-    esp_wifi_disconnect();
-    esp_wifi_stop();
-    vTaskDelay(pdMS_TO_TICKS(200));
 
     // 1. NVS
     esp_err_t ret = nvs_flash_init();
@@ -129,6 +131,10 @@ void bsp_wifi_init(void)
     ret |= esp_wifi_set_config(WIFI_IF_STA, &wifi_config);
     ret |= esp_wifi_start();
     ESP_LOGI(TAG, "start: %d", ret);
+    if (ret == ESP_OK) {
+        s_wifi_started = true;
+        s_last_reconnect_tick = xTaskGetTickCount();
+    }
 
     strncpy(s_ip_str, DEVICE_IP, sizeof(s_ip_str) - 1);
     s_ip_str[sizeof(s_ip_str) - 1] = '\0';
@@ -137,7 +143,17 @@ void bsp_wifi_init(void)
 
 void bsp_wifi_poll(void)
 {
-    // WiFi状态轮询（无打印，打印由main.c统一处理：只在状态变化时）
+    // WiFi状态轮询 + 兜底重连（防止某些启动时序下首次连接失败后不再重试）
+    if (!s_wifi_started || s_connected) return;
+
+    TickType_t now = xTaskGetTickCount();
+    if ((now - s_last_reconnect_tick) >= pdMS_TO_TICKS(2000)) {
+        s_last_reconnect_tick = now;
+        esp_err_t ret = esp_wifi_connect();
+        if (ret != ESP_OK && ret != ESP_ERR_WIFI_CONN) {
+            ESP_LOGW(TAG, "poll reconnect failed: %d", ret);
+        }
+    }
 }
 
 bool WiFi_connected(void)

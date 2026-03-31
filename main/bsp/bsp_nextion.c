@@ -22,8 +22,8 @@ static const char *TAG = "NEXTION";
 
 // Nextion UART配置
 #define NEXTION_UART_NUM      UART_NUM_2
-#define NEXTION_TX_GPIO       GPIO_NUM_4
-#define NEXTION_RX_GPIO       GPIO_NUM_5
+#define NEXTION_TX_GPIO       GPIO_NUM_43
+#define NEXTION_RX_GPIO       GPIO_NUM_44
 #define NEXTION_BAUD_RATE     115200
 #define NEXTION_BUF_SIZE      1024
 

@@ -343,7 +343,8 @@ static void sfx_task(void *pv)
 
     while (1) {
         // 等待SFX请求（阻塞）
-        if (xQueueReceive(s_sfx_queue, &req, portMAX_DELAY) != pdTRUE) {
+        if (xQueueReceive(s_sfx_queue, &req, pdMS_TO_TICKS(1000)) != pdTRUE) {
+            esp_task_wdt_reset();
             continue;
         }
 
@@ -386,6 +387,7 @@ static void sfx_task(void *pv)
 
             s_sfx_sample_pos += to_write;
             total_written += to_write;
+            esp_task_wdt_reset();
         }
 
         ESP_LOGI(TAG, "sfxTask: SFX type=%d done, %u samples written", req.type, (unsigned)total_written);
@@ -401,6 +403,7 @@ static void sfx_task(void *pv)
             extern void music_resume_from_sfx(void);
             music_resume_from_sfx();
         }
+        esp_task_wdt_reset();
     }
 }
 
@@ -422,7 +425,7 @@ static void music_task(void *pv)
     while (1) {
         // 等待恢复信号量（音效播放完毕后被sfxTask释放）
         if (s_music_resume_sem != NULL) {
-            if (xSemaphoreTake(s_music_resume_sem, portMAX_DELAY) == pdTRUE) {
+            if (xSemaphoreTake(s_music_resume_sem, pdMS_TO_TICKS(1000)) == pdTRUE) {
                 ESP_LOGI(TAG, "musicTask: resuming background music");
                 audio_player_resume();
                 s_music_state = MUSIC_STATE_PLAYING;
@@ -430,6 +433,7 @@ static void music_task(void *pv)
         } else {
             vTaskDelay(pdMS_TO_TICKS(1000));
         }
+        esp_task_wdt_reset();
     }
 }
 
@@ -456,7 +460,7 @@ static void event_task(void *pv)
 
     while (1) {
         // 从事件队列接收（HTTP server通过bsp_music_trigger_win()入队）
-        if (xQueueReceive(s_event_queue, &msg, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(s_event_queue, &msg, pdMS_TO_TICKS(1000)) == pdTRUE) {
             if (msg.type == EVENT_WIN) {
                 ESP_LOGI(TAG, "eventTask: WIN event received, triggering SFX");
                 sfx_request_t req = {.type = SFX_WIN};
@@ -471,6 +475,7 @@ static void event_task(void *pv)
                 xQueueSend(s_sfx_queue, &req, 0);
             }
         }
+        esp_task_wdt_reset();
     }
 }
 

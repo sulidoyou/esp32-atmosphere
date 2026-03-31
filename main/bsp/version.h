@@ -8,8 +8,9 @@
 #define APP_VERSION_MINOR  3
 #define APP_VERSION_PATCH  3
 
-// 使用两层宏实现正确的值stringify（避免与系统__STRINGIFY冲突）
-#define _STRINGIFY(x)  #x
+// 使用两层宏实现正确的值stringify（确保APP_VERSION_*先展开为数字）
+#define _STRINGIFY_INNER(x)  #x
+#define _STRINGIFY(x)        _STRINGIFY_INNER(x)
 #define _JOIN3(a,b,c)  a "." b "." c
 #define _JOIN4(a,b,c,d) a "." b "." c "." d
 

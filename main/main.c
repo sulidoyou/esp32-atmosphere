@@ -59,6 +59,7 @@ void network_led_task(void *pv)
             }
         }
 
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(100));  // 5Hz闪烁（100ms翻转）
     }
 }
@@ -78,7 +79,10 @@ void atmosphere_mode_task(void *pv)
              : BREATHING_LED_MODE_BREATH;
         breathing_led_set_mode(mode);
         // ESP_LOGI(TAG, "Auto mode: %s", mode == BREATHING_LED_MODE_BREATH ? "breath" : "rainbow");
-        vTaskDelay(pdMS_TO_TICKS(10000));
+        for (int i = 0; i < 100; i++) {
+            esp_task_wdt_reset();
+            vTaskDelay(pdMS_TO_TICKS(100));
+        }
     }
 }
 
@@ -150,6 +154,7 @@ void nextion_display_task(void *pv)
         bsp_nextion_update_bpm(drum_info.bpm);
         
         // 节拍可视化由鼓点任务回调触发，这里只更新运行状态
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }

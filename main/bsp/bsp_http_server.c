@@ -24,6 +24,7 @@ static SemaphoreHandle_t s_ota_lock = NULL;
 // ============ OTA状态（防止重入）============
 static volatile bool s_ota_uploading = false;
 static volatile bool s_ota_flashing = false;
+static volatile bool s_ota_rebooting = false;
 
 // ============ 音乐状态追踪（减少无用日志）============
 static bool s_prev_playing = false;
@@ -175,9 +176,9 @@ static const char s_html[] =
 "</div>"
 
 "<div class=card><h2>OTA 固件更新</h2>"
-"<div class=ota-info id=otaInfo>固件上传至SD卡，验证后安全烧录</div>"
+"<div class=ota-info id=otaInfo>选择固件后将通过网络直接升级并自动重启</div>"
 "<input type=file id=fwFile accept='.bin' style=display:none onchange=fwSelect(this)>"
-"<button class=ota-btn id=otaBtn onclick=document.getElementById('fwFile').click()>选择固件 (.bin) 上传到SD卡</button>"
+"<button class=ota-btn id=otaBtn onclick=document.getElementById('fwFile').click()>选择固件 (.bin) 立即网络升级</button>"
 "<div class=ota-progress id=otaProgress><div class=ota-progress-bar id=otaBar></div></div>"
 "<div class=ota-log id=otaLog>等待选择固件文件...</div>"
 "<div class=ota-success id=otaSuccess style=display:none></div>"
@@ -233,26 +234,30 @@ static const char s_html[] =
 "      err=document.getElementById('otaError'),"
 "      flashBtn=document.getElementById('fwFlashBtn'),"
 "      status=document.getElementById('fwStatus');"
+"  var lastProgress=0;"
 "  succ.style.display='none';err.style.display='none';"
+"  flashBtn.style.display='none';status.textContent='';fwReady=false;"
 "  prog.style.display='block';bar.style.width='0%';"
-"  log.textContent='已选: '+f.name+' ('+Math.round(f.size/1024)+' KB)\\n开始上传到SD卡...';"
+"  log.textContent='已选: '+f.name+' ('+Math.round(f.size/1024)+' KB)\\n开始网络升级，请勿断电...';"
 "  btn.disabled=true;btn.textContent='上传中...';"
 "  var xhr=new XMLHttpRequest();"
+"  xhr.timeout=180000;"
 "  xhr.upload.addEventListener('progress',function(e){"
 "    if(e.lengthComputable){"
 "      var p=Math.round(e.loaded/e.total*100);"
+"      lastProgress=p;"
 "      bar.style.width=p+'%';"
 "      log.textContent='上传中: '+p+'% ('+Math.round(e.loaded/1024)+'/'+Math.round(e.total/1024)+' KB)';"
 "    }"
 "  });"
 "  xhr.addEventListener('load',function(){"
 "    if(xhr.status==200){"
-"      log.textContent='上传完成，固件已保存到SD卡';"
+"      log.textContent='升级成功: '+xhr.responseText;"
 "      bar.style.width='100%';"
 "      succ.style.display='block';"
-"      succ.textContent='固件上传成功！点击下方按钮烧录并重启';"
-"      flashBtn.style.display='block';status.textContent='待烧录: '+f.name;"
-"      fwReady=true;btn.textContent='上传完成';"
+"      succ.textContent='OTA升级成功，设备即将自动重启';"
+"      fwReady=true;btn.textContent='升级完成';"
+"      setTimeout(function(){location.reload();},4000);"
 "    }else{"
 "      log.textContent='上传失败 HTTP '+xhr.status;"
 "      err.style.display='block';err.textContent='上传失败 (HTTP '+xhr.status+')';"
@@ -260,11 +265,32 @@ static const char s_html[] =
 "    }"
 "  });"
 "  xhr.addEventListener('error',function(){"
-"    log.textContent='上传失败，请检查网络';"
-"    err.style.display='block';err.textContent='网络错误';"
-"    btn.disabled=false;btn.textContent='重新选择固件';prog.style.display='none';"
+"    if(lastProgress>=100){"
+"      bar.style.width='100%';"
+"      log.textContent='固件已上传，设备正在重启（浏览器连接中断属正常）';"
+"      succ.style.display='block';succ.textContent='OTA升级进行中，请等待设备重启后自动刷新';"
+"      btn.textContent='升级中...';"
+"      setTimeout(function(){location.reload();},6000);"
+"    }else{"
+"      log.textContent='上传失败，请检查网络';"
+"      err.style.display='block';err.textContent='网络错误';"
+"      btn.disabled=false;btn.textContent='重新选择固件';prog.style.display='none';"
+"    }"
 "  });"
-"  xhr.open('POST','/api/ota_upload');xhr.send(f);"
+"  xhr.addEventListener('timeout',function(){"
+"    if(lastProgress>=100){"
+"      bar.style.width='100%';"
+"      log.textContent='固件已上传，设备正在重启（超时属正常）';"
+"      succ.style.display='block';succ.textContent='OTA升级进行中，请等待设备重启后自动刷新';"
+"      btn.textContent='升级中...';"
+"      setTimeout(function(){location.reload();},6000);"
+"    }else{"
+"      log.textContent='上传超时，请检查网络';"
+"      err.style.display='block';err.textContent='上传超时';"
+"      btn.disabled=false;btn.textContent='重新选择固件';prog.style.display='none';"
+"    }"
+"  });"
+"  xhr.open('POST','/api/ota_direct');xhr.send(f);"
 "}"
 "function doFlash(){"
 "  var log=document.getElementById('otaLog'),"
@@ -296,7 +322,7 @@ static const char s_html[] =
 "}"
 "doit('info');"
 "document.getElementById('bpause').style.display='none';"
-"fetch('/api/version').then(function(r){return r.text()}).then(function(v){"
+"fetch('/api/version?t='+Date.now()).then(function(r){return r.text()}).then(function(v){"
 "  var e=document.getElementById('ver');if(e)e.textContent=v;"
 "  var e2=document.getElementById('fwver');if(e2)e2.textContent=v;"
 "});"
@@ -361,7 +387,9 @@ static esp_err_t music_cb(httpd_req_t *req)
     s_prev_playing = now_playing;
 
     char resp[256];
-    snprintf(resp, sizeof(resp), "{\"sta\":\"%s\",\"cur\":\"%s\",\"song\":\"%s\"}", sta, cur, song);
+    snprintf(resp, sizeof(resp),
+             "{\"sta\":\"%s\",\"cur\":\"%s\",\"song\":\"%s\",\"fw\":\"%s\"}",
+             sta, cur, song, APP_VERSION_STR);
     httpd_resp_set_type(req, "application/json");
     httpd_resp_send(req, resp, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
@@ -477,7 +505,10 @@ static esp_err_t drum_cb(httpd_req_t *req)
             bsp_drum_set_velocity(vel);
         }
         // 根据节奏类型设置 fire_limit：单击=1次，双击=2次，其他=节奏周期数
-        rhythm_type_t fire_limit_rhythm = (rs[0] != '\0') ? rhythms[r] : info.rhythm;
+        rhythm_type_t fire_limit_rhythm = info.rhythm;
+        if (rs[0] != '\0' && r >= 0 && r < (int)(sizeof(rhythms) / sizeof(rhythms[0]))) {
+            fire_limit_rhythm = rhythms[r];
+        }
         uint8_t fire_limit_map[5] = {1, 2, 4, 3, 4};  // 单击,双击,滚奏,华尔兹,摇滚
         bsp_drum_set_fire_limit(fire_limit_map[fire_limit_rhythm]);
         bsp_drum_start();
@@ -543,6 +574,9 @@ static esp_err_t win_cb(httpd_req_t *req)
 
 static esp_err_t version_cb(httpd_req_t *req)
 {
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    httpd_resp_set_hdr(req, "Expires", "0");
     httpd_resp_send(req, APP_VERSION_STR, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
@@ -564,7 +598,7 @@ static esp_err_t ota_info_cb(httpd_req_t *req)
         snprintf(info, sizeof(info),
                  "当前: <b>%s</b> @ 0x%" PRIx32 "<br>"
                  "OTA目标: <b>%s</b> @ 0x%" PRIx32 "<br>"
-                 "<span style=color:#e67e22>固件上传到SD卡，再烧录到OTA分区</span>",
+                 "<span style=color:#e67e22>支持网页直接网络升级（上传后自动写入并重启）</span>",
                  run ? run->label : "?",
                  run ? (uint32_t)run->address : 0,
                  next->label,
@@ -580,7 +614,7 @@ static esp_err_t ota_upload_cb(httpd_req_t *req)
     // 防重入：使用互斥锁
     if (s_ota_lock == NULL || xSemaphoreTake(s_ota_lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
         httpd_resp_send(req, "Server busy", -1);
-        return ESP_FAIL;
+        return ESP_OK;
     }
     
     if (s_ota_uploading) {
@@ -641,6 +675,142 @@ static esp_err_t ota_upload_cb(httpd_req_t *req)
     ESP_LOGI(TAG, "OTA firmware saved: %d bytes", received);
     s_ota_uploading = false;
     httpd_resp_send(req, "OK", 2);
+    return ESP_OK;
+}
+
+static void ota_reboot_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(3500));
+    esp_restart();
+    vTaskDelete(NULL);
+}
+
+// 网页直传固件并直接 OTA（不经 SD 卡）
+static esp_err_t ota_direct_cb(httpd_req_t *req)
+{
+    if (s_ota_lock == NULL || xSemaphoreTake(s_ota_lock, pdMS_TO_TICKS(1000)) != pdTRUE) {
+        httpd_resp_send(req, "Server busy", -1);
+        return ESP_FAIL;
+    }
+    if (s_ota_flashing || s_ota_uploading || s_ota_rebooting) {
+        xSemaphoreGive(s_ota_lock);
+        httpd_resp_send(req, "OTA already in progress", -1);
+        return ESP_OK;
+    }
+    s_ota_flashing = true;
+    xSemaphoreGive(s_ota_lock);
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (update_partition == NULL) {
+        s_ota_flashing = false;
+        httpd_resp_send(req, "No OTA partition available", -1);
+        return ESP_OK;
+    }
+
+    size_t content_len = req->content_len;
+    size_t header_size = sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t);
+    if (content_len == 0 || content_len < header_size || content_len > update_partition->size) {
+        s_ota_flashing = false;
+        httpd_resp_send(req, "Invalid firmware size", -1);
+        return ESP_OK;
+    }
+
+    esp_ota_handle_t ota_handle;
+    esp_err_t err = esp_ota_begin(update_partition, OTA_WITH_SEQUENTIAL_WRITES, &ota_handle);
+    if (err != ESP_OK) {
+        s_ota_flashing = false;
+        httpd_resp_send(req, "esp_ota_begin failed", -1);
+        return ESP_OK;
+    }
+
+    char *rx = (char *)malloc(4096);
+    if (rx == NULL) {
+        esp_ota_abort(ota_handle);
+        s_ota_flashing = false;
+        httpd_resp_send(req, "No memory for OTA buffer", -1);
+        return ESP_OK;
+    }
+    uint8_t header[sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t) + sizeof(esp_app_desc_t)];
+    size_t got = 0;
+    size_t got_header = 0;
+    bool version_checked = false;
+    bool failed = false;
+
+    while (got < content_len) {
+        int ret = httpd_req_recv(req, rx, sizeof(rx));
+        if (ret == HTTPD_SOCK_ERR_TIMEOUT) {
+            continue;
+        }
+        if (ret <= 0) {
+            failed = true;
+            break;
+        }
+
+        if (got_header < sizeof(header)) {
+            size_t need = sizeof(header) - got_header;
+            size_t copy = (size_t)ret < need ? (size_t)ret : need;
+            memcpy(header + got_header, rx, copy);
+            got_header += copy;
+
+            if (got_header == sizeof(header) && !version_checked) {
+                esp_app_desc_t new_app_info;
+                memcpy(&new_app_info,
+                       &header[sizeof(esp_image_header_t) + sizeof(esp_image_segment_header_t)],
+                       sizeof(esp_app_desc_t));
+
+                const esp_partition_t *running = esp_ota_get_running_partition();
+                esp_app_desc_t running_app_info;
+                if (esp_ota_get_partition_description(running, &running_app_info) == ESP_OK &&
+                    memcmp(new_app_info.version, running_app_info.version, sizeof(new_app_info.version)) == 0) {
+                    esp_ota_abort(ota_handle);
+                    free(rx);
+                    s_ota_flashing = false;
+                    httpd_resp_send(req, "Same version as running - no update needed", -1);
+                    return ESP_OK;
+                }
+                version_checked = true;
+            }
+        }
+
+        err = esp_ota_write(ota_handle, rx, (size_t)ret);
+        if (err != ESP_OK) {
+            failed = true;
+            break;
+        }
+        got += (size_t)ret;
+    }
+
+    if (failed || got != content_len) {
+        esp_ota_abort(ota_handle);
+        free(rx);
+        s_ota_flashing = false;
+        httpd_resp_send(req, "OTA upload interrupted", -1);
+        return ESP_OK;
+    }
+
+    err = esp_ota_end(ota_handle);
+    if (err != ESP_OK) {
+        esp_ota_abort(ota_handle);
+        free(rx);
+        s_ota_flashing = false;
+        httpd_resp_send(req, "OTA end failed", -1);
+        return ESP_OK;
+    }
+
+    err = esp_ota_set_boot_partition(update_partition);
+    if (err != ESP_OK) {
+        free(rx);
+        s_ota_flashing = false;
+        httpd_resp_send(req, "Set boot partition failed", -1);
+        return ESP_OK;
+    }
+
+    free(rx);
+    s_ota_flashing = false;
+    s_ota_rebooting = true;
+    httpd_resp_send(req, "OTA OK - rebooting", -1);
+    xTaskCreate(ota_reboot_task, "ota_reboot", 2048, NULL, 5, NULL);
     return ESP_OK;
 }
 
@@ -757,10 +927,19 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
 
     ESP_LOGI(TAG, "OTA: writing to partition %s", update_partition->label);
 
-    // 分块复制（跳过固件头）
+    // 回到文件起始位置，确保完整镜像（含头部）写入 OTA 分区
+    if (lseek(fd, 0, SEEK_SET) < 0) {
+        ESP_LOGE(TAG, "Failed to seek firmware file start");
+        esp_ota_abort(ota_handle);
+        close(fd);
+        s_ota_flashing = false;
+        httpd_resp_send(req, "Cannot seek firmware file", -1);
+        return ESP_FAIL;
+    }
+
+    // 分块复制整个固件镜像
     char chunk[8192];
     size_t total_written = 0;
-    size_t header_skipped = 0;
 
     while (1) {
         ssize_t r = read(fd, chunk, sizeof(chunk));
@@ -774,23 +953,7 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
             return ESP_FAIL;
         }
 
-        // 跳过第一次读的头部
-        const uint8_t *write_ptr = (const uint8_t *)chunk;
-        size_t write_len = r;
-
-        if (header_skipped == 0) {
-            size_t skip = header_size < (size_t)r ? header_size : (size_t)r;
-            write_ptr += skip;
-            write_len -= skip;
-            header_skipped = 1;
-            // 如果剩余为0，继续读下一个块
-            if (write_len == 0) {
-                total_written += r;  // 记录但不用来写
-                continue;
-            }
-        }
-
-        err = esp_ota_write(ota_handle, write_ptr, write_len);
+        err = esp_ota_write(ota_handle, chunk, (size_t)r);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "esp_ota_write failed: %s", esp_err_to_name(err));
             esp_ota_abort(ota_handle);
@@ -799,7 +962,7 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
             httpd_resp_send(req, "Flash write failed", -1);
             return ESP_FAIL;
         }
-        total_written += r;
+        total_written += (size_t)r;
     }
 
     close(fd);
@@ -807,6 +970,7 @@ static esp_err_t ota_flash_cb(httpd_req_t *req)
 
     err = esp_ota_end(ota_handle);
     if (err != ESP_OK) {
+        esp_ota_abort(ota_handle);
         if (err == ESP_ERR_OTA_VALIDATE_FAILED) {
             ESP_LOGE(TAG, "Image validation failed");
             s_ota_flashing = false;
@@ -851,9 +1015,11 @@ void bsp_http_server_start(void)
     
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.server_port = 80;
-    cfg.stack_size = 8192;
+    cfg.stack_size = 12288;
     cfg.lru_purge_enable = true;
     cfg.max_uri_handlers = 32;  // 修复：默认只有8个，不够10个URI注册
+    cfg.recv_wait_timeout = 60;
+    cfg.send_wait_timeout = 20;
 
     httpd_handle_t srv = NULL;
     esp_err_t err = httpd_start(&srv, &cfg);
@@ -872,6 +1038,7 @@ void bsp_http_server_start(void)
         {"/win",          HTTP_GET,  win_cb,       NULL},
         {"/api/version",  HTTP_GET,  version_cb,   NULL},
         {"/api/ota_info", HTTP_GET,  ota_info_cb,  NULL},
+        {"/api/ota_direct", HTTP_POST, ota_direct_cb, NULL},
         {"/api/ota_upload", HTTP_POST, ota_upload_cb, NULL},
         {"/api/ota_flash",  HTTP_POST, ota_flash_cb, NULL},
     };

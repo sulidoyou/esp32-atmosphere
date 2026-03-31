@@ -126,6 +126,7 @@ void breathing_led_task(void *pvParameters)
                 if (s_brightness >= BREATH_MAX_BRIGHT) {
                     s_brightness = BREATH_MAX_BRIGHT;
                     s_direction = -1;
+                    esp_task_wdt_reset();
                     vTaskDelay(pdMS_TO_TICKS(BREATH_PAUSE_MS));
                 }
             } else {
@@ -133,6 +134,7 @@ void breathing_led_task(void *pvParameters)
                 if (s_brightness <= BREATH_MIN_BRIGHT) {
                     s_brightness = BREATH_MIN_BRIGHT;
                     s_direction = 1;
+                    esp_task_wdt_reset();
                     vTaskDelay(pdMS_TO_TICKS(BREATH_PAUSE_MS));
                 }
             }
@@ -171,6 +173,7 @@ void breathing_led_task(void *pvParameters)
             }
         }
 
+        esp_task_wdt_reset();
         vTaskDelay(pdMS_TO_TICKS(BREATH_STEP_MS));
     }
 }
