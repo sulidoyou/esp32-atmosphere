@@ -29,8 +29,12 @@ void bsp_init(void)
     // bsp_pca9557_init();     // ❌ 硬件无PCA9557，仅74HC245（直接IO），注释掉避免I2C冲突
     bsp_es8311_init();        // ES8311音频编解码器
 
-    tf_mount();                // SD卡挂载（音乐文件读取）
-    mp3_palyer_init();        // 音乐播放器初始化
+    esp_err_t tf_ret = tf_mount();  // SD卡挂载（音乐文件读取）
+    if (tf_ret == ESP_OK) {
+        mp3_palyer_init();          // 音乐播放器初始化
+    } else {
+        ESP_LOGE(TAG, "TF mount failed, skip mp3_palyer_init: %s", esp_err_to_name(tf_ret));
+    }
 
     bsp_breathing_led_init(); // 呼吸灯PWM
     bsp_magent_init();         // 电磁铁GPIO（已初始化过，仅重新配置）

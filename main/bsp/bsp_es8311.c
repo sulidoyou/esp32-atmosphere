@@ -5,7 +5,7 @@ esp_codec_dev_handle_t _codec_dev;
 #define CODEC_DEFAULT_SAMPLE_RATE          (48000)
 #define CODEC_DEFAULT_BIT_WIDTH            (16)
 #define CODEC_DEFAULT_ADC_VOLUME           (24.0)
-#define CODEC_DEFAULT_CHANNEL              (2)
+#define CODEC_DEFAULT_CHANNEL              (I2S_SLOT_MODE_STEREO)
 // 设置采样率
 esp_err_t bsp_codec_set_fs(uint32_t rate, uint32_t bits_cfg, i2s_slot_mode_t ch)
 {
@@ -111,7 +111,7 @@ void bsp_es8311_init(void)
  */
 static esp_codec_dev_sample_info_t fs = {
     .sample_rate = 48000,//44100,                // 采样率（如8000, 16000, 44100等）,每秒数据量：44,100 × 2 × 2 = 184,400 字节/秒
-    .channel = 2, // 声道（单声道/立体声） ES8311不支持双声道
+    .channel = I2S_SLOT_MODE_STEREO, // 声道：立体声
     .bits_per_sample = 16,               // 位深（16/24位）
     .mclk_multiple = 0                   // If value is 0, mclk = sample_rate * 256
 };

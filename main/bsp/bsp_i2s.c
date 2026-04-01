@@ -18,8 +18,8 @@ void bsp_i2s_init(void)
         return;
     }   
     i2s_std_config_t std_cfg = {
-        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(16000),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(16, I2S_SLOT_MODE_MONO),
+        .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(48000),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(16, I2S_SLOT_MODE_STEREO),
         .gpio_cfg ={
             .mclk = GPIO_I2S_MCK,
             .bclk = GPIO_I2S_BCK,
@@ -59,17 +59,30 @@ void bsp_i2s_init(void)
 // 播放PCM采样（非阻塞，直接写I2S TX）
 void bsp_i2s_play_pcm(const int16_t *samples, int count)
 {
-    if (!i2stx_handle) return;
+    if (!i2stx_handle || samples == NULL || count <= 0) return;
     size_t bytes_written = 0;
-    // 16bit mono → I2S需要16bit左对齐mono
-    // I2S slot配置为MONO但codec期望stereo，实际写入时复制L=R
-    int16_t stereo[count * 2];
-    for (int i = 0; i < count; i++) {
-        stereo[i * 2]     = samples[i];
-        stereo[i * 2 + 1] = samples[i];
+    // 输入为16bit mono，分块复制为stereo (L=R)，避免VLA栈溢出
+    const int chunk_samples = 256;
+    int16_t stereo[chunk_samples * 2];
+
+    for (int offset = 0; offset < count; offset += chunk_samples) {
+        int this_chunk = count - offset;
+        if (this_chunk > chunk_samples) {
+            this_chunk = chunk_samples;
+        }
+
+        for (int i = 0; i < this_chunk; i++) {
+            int16_t v = samples[offset + i];
+            stereo[i * 2] = v;
+            stereo[i * 2 + 1] = v;
+        }
+
+        i2s_channel_write(i2stx_handle,
+                          stereo,
+                          this_chunk * 2 * sizeof(int16_t),
+                          &bytes_written,
+                          pdMS_TO_TICKS(50));
     }
-    i2s_channel_write(i2stx_handle, stereo, count * 2 * sizeof(int16_t),
-                       &bytes_written, pdMS_TO_TICKS(50));
 }
 
 

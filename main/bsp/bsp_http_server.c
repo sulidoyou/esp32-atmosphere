@@ -346,7 +346,7 @@ static esp_err_t music_cb(httpd_req_t *req)
     httpd_req_get_url_query_str(req, buf, sizeof(buf));
     httpd_query_key_value(buf, "c", cmd, sizeof(cmd));
 
-    char sta[16] = "unknown", cur[32] = "--/--", song[64] = "-";
+    char sta[16] = "unknown", cur[32] = "--/--", song[192] = "-";
 
     audio_player_state_t st = audio_player_get_state();
     if (st == AUDIO_PLAYER_STATE_PLAYING) strcpy(sta, "playing");
@@ -386,7 +386,7 @@ static esp_err_t music_cb(httpd_req_t *req)
     }
     s_prev_playing = now_playing;
 
-    char resp[256];
+    char resp[512];
     snprintf(resp, sizeof(resp),
              "{\"sta\":\"%s\",\"cur\":\"%s\",\"song\":\"%s\",\"fw\":\"%s\"}",
              sta, cur, song, APP_VERSION_STR);

@@ -5,7 +5,7 @@
 static const char *TAG = "music_play";
 file_iterator_instance_t *g_file_iterator = NULL;  // non-static for extern access from bsp_http_server
 static audio_player_config_t player_config = {0};
-static char g_current_fname[64] = "unknown";
+static char g_current_fname[192] = "unknown";
 uint8_t g_sys_volume = 8;
 
 static esp_err_t _audio_player_mute_fn(AUDIO_PLAYER_MUTE_SETTING setting);
@@ -27,6 +27,10 @@ void mp3_palyer_init(void)
     }
     size_t file_count = file_iterator_get_count(g_file_iterator);
     ESP_LOGI(TAG, "find mp3:%d", file_count);
+    if (file_count == 0) {
+        ESP_LOGW(TAG, "no audio files found under %s", FULL_MUSIC_PATH);
+        return;
+    }
 
     // 初始化音频播放
     player_config.mute_fn = _audio_player_mute_fn;
@@ -34,8 +38,17 @@ void mp3_palyer_init(void)
     player_config.clk_set_fn = _audio_player_std_clock;
     player_config.priority = 1;
 
-    ESP_ERROR_CHECK(audio_player_new(player_config));
-    ESP_ERROR_CHECK(audio_player_callback_register(_audio_player_callback, NULL));
+    esp_err_t ret = audio_player_new(player_config);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "audio_player_new failed: %s", esp_err_to_name(ret));
+        return;
+    }
+
+    ret = audio_player_callback_register(_audio_player_callback, NULL);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "audio_player_callback_register failed: %s", esp_err_to_name(ret));
+        return;
+    }
 
     int index = file_iterator_get_index(g_file_iterator);
     ESP_LOGI(TAG, "playing index '%d'", index);
@@ -141,6 +154,10 @@ static esp_err_t _audio_player_std_clock(uint32_t rate, uint32_t bits_cfg,
 static void play_index(int index)
 {
     ESP_LOGI(TAG, "play_index(%d)", index);
+    if (g_file_iterator == NULL) {
+        ESP_LOGE(TAG, "play_index: g_file_iterator is NULL");
+        return;
+    }
 
     char filename[128];
     int retval = file_iterator_get_full_path_from_index(g_file_iterator, index,
@@ -161,7 +178,12 @@ static void play_index(int index)
         // audio_player_play后，audio_player会异步读取数据
         // 读取完成后audio_player内部会关闭fp，这里不需要也不应该fclose
         // 否则会导致audio_player读取时fd已关闭
-        audio_player_play(fp);
+        esp_err_t ret = audio_player_play(fp);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "audio_player_play failed: %s", esp_err_to_name(ret));
+            fclose(fp);
+            return;
+        }
     } else {
         ESP_LOGE(TAG, "unable to open index %d, filename '%s'", index, filename);
     }
@@ -172,6 +194,9 @@ static void _audio_player_callback(audio_player_cb_ctx_t *ctx)
 {
     switch (ctx->audio_event) {
     case AUDIO_PLAYER_CALLBACK_EVENT_IDLE: {
+        if (g_file_iterator == NULL) {
+            break;
+        }
         file_iterator_next(g_file_iterator);
         int index = file_iterator_get_index(g_file_iterator);
         ESP_LOGI(TAG, "Track ended, playing index %d", index);

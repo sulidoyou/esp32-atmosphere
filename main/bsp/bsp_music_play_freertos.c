@@ -70,22 +70,19 @@ typedef struct {
     sfx_type_t type;
 } sfx_request_t;
 
-// WAV文件头（简化版，只支持标准PCM WAV）
+// WAV解析结果（标准RIFF chunk解析）
 typedef struct {
-    char     riff[4];        // "RIFF"
-    uint32_t file_size;
-    char     wave[4];        // "WAVE"
-    char     fmt[4];         // "fmt "
-    uint32_t fmt_size;
     uint16_t audio_format;   // 1 = PCM
     uint16_t num_channels;
     uint32_t sample_rate;
     uint32_t byte_rate;
     uint16_t block_align;
     uint16_t bits_per_sample;
-    char     data[4];        // "data"
     uint32_t data_size;
-} __attribute__((packed)) wav_header_t;
+    long     data_offset;
+    bool     fmt_found;
+    bool     data_found;
+} wav_info_t;
 
 // SFX音效数据
 typedef struct {
@@ -128,6 +125,9 @@ static volatile music_state_t s_music_state = MUSIC_STATE_STOPPED;
 
 // I2S TX句柄
 static i2s_chan_handle_t s_i2s_tx = NULL;
+static TaskHandle_t s_music_task_handle = NULL;
+static TaskHandle_t s_sfx_task_handle = NULL;
+static TaskHandle_t s_event_task_handle = NULL;
 
 // Ping-pong DMA buffer
 static int16_t *s_dma_buf[DMA_BUF_COUNT] = {NULL};
@@ -148,6 +148,8 @@ static void event_task(void *pv);
 
 static esp_err_t sfx_load_to_psram(sfx_type_t type, const char *path);
 static esp_err_t sfx_write_i2s_stereo(const int16_t *samples, size_t count);
+static esp_err_t wav_parse_info(FILE *fp, wav_info_t *info);
+static void music_system_cleanup(void);
 
 // 临时SD卡路径缓冲（用于SFX加载）
 static char s_sfx_path_buf[128];
@@ -189,6 +191,91 @@ static void dma_switch(void)
     s_cur_buf = (s_cur_buf + 1) % DMA_BUF_COUNT;
 }
 
+static uint16_t le16(const uint8_t *p)
+{
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
+
+static uint32_t le32(const uint8_t *p)
+{
+    return (uint32_t)p[0]
+         | ((uint32_t)p[1] << 8)
+         | ((uint32_t)p[2] << 16)
+         | ((uint32_t)p[3] << 24);
+}
+
+static esp_err_t wav_parse_info(FILE *fp, wav_info_t *info)
+{
+    if (fp == NULL || info == NULL) return ESP_ERR_INVALID_ARG;
+    memset(info, 0, sizeof(*info));
+
+    if (fseek(fp, 0, SEEK_SET) != 0) return ESP_FAIL;
+
+    uint8_t riff_hdr[12];
+    if (fread(riff_hdr, 1, sizeof(riff_hdr), fp) != sizeof(riff_hdr)) {
+        return ESP_FAIL;
+    }
+    if (memcmp(riff_hdr, "RIFF", 4) != 0 || memcmp(riff_hdr + 8, "WAVE", 4) != 0) {
+        return ESP_FAIL;
+    }
+
+    while (!info->data_found) {
+        uint8_t chunk_hdr[8];
+        if (fread(chunk_hdr, 1, sizeof(chunk_hdr), fp) != sizeof(chunk_hdr)) {
+            break;
+        }
+
+        uint32_t chunk_size = le32(chunk_hdr + 4);
+        long chunk_data_offset = ftell(fp);
+        if (chunk_data_offset < 0) {
+            return ESP_FAIL;
+        }
+
+        if (memcmp(chunk_hdr, "fmt ", 4) == 0) {
+            if (chunk_size < 16) {
+                return ESP_FAIL;
+            }
+            uint8_t fmt_core[16];
+            if (fread(fmt_core, 1, sizeof(fmt_core), fp) != sizeof(fmt_core)) {
+                return ESP_FAIL;
+            }
+            info->audio_format = le16(fmt_core + 0);
+            info->num_channels = le16(fmt_core + 2);
+            info->sample_rate = le32(fmt_core + 4);
+            info->byte_rate = le32(fmt_core + 8);
+            info->block_align = le16(fmt_core + 12);
+            info->bits_per_sample = le16(fmt_core + 14);
+            info->fmt_found = true;
+
+            if (chunk_size > 16) {
+                if (fseek(fp, (long)(chunk_size - 16), SEEK_CUR) != 0) {
+                    return ESP_FAIL;
+                }
+            }
+        } else if (memcmp(chunk_hdr, "data", 4) == 0) {
+            info->data_size = chunk_size;
+            info->data_offset = chunk_data_offset;
+            info->data_found = true;
+            break;
+        } else {
+            if (fseek(fp, (long)chunk_size, SEEK_CUR) != 0) {
+                return ESP_FAIL;
+            }
+        }
+
+        if ((chunk_size & 1U) != 0U) {
+            if (fseek(fp, 1, SEEK_CUR) != 0) {
+                return ESP_FAIL;
+            }
+        }
+    }
+
+    if (!info->fmt_found || !info->data_found) {
+        return ESP_FAIL;
+    }
+    return ESP_OK;
+}
+
 // ============================================================
 // WAV解析和PSRAM预加载
 // ============================================================
@@ -218,46 +305,34 @@ static esp_err_t sfx_load_to_psram(sfx_type_t type, const char *path)
         return ESP_FAIL;
     }
 
-    // 读取WAV头
-    wav_header_t header;
-    size_t hdr_len = fread(&header, 1, sizeof(header), fp);
-    if (hdr_len < sizeof(header)) {
-        ESP_LOGE(TAG, "WAV header read error: %s", path);
-        fclose(fp);
-        return ESP_FAIL;
-    }
-
-    // 验证RIFF WAVE格式
-    if (memcmp(header.riff, "RIFF", 4) != 0 ||
-        memcmp(header.wave, "WAVE", 4) != 0 ||
-        memcmp(header.fmt,  "fmt ", 4) != 0 ||
-        memcmp(header.data, "data", 4) != 0) {
-        ESP_LOGE(TAG, "Invalid WAV format: %s", path);
+    wav_info_t info;
+    if (wav_parse_info(fp, &info) != ESP_OK) {
+        ESP_LOGE(TAG, "Invalid/unsupported WAV header: %s", path);
         fclose(fp);
         return ESP_FAIL;
     }
 
     // 只支持PCM格式
-    if (header.audio_format != 1) {
-        ESP_LOGE(TAG, "Unsupported WAV format %d: %s", header.audio_format, path);
+    if (info.audio_format != 1) {
+        ESP_LOGE(TAG, "Unsupported WAV format %d: %s", info.audio_format, path);
         fclose(fp);
         return ESP_FAIL;
     }
 
     // 检查data大小
-    uint32_t data_size = header.data_size;
+    uint32_t data_size = info.data_size;
     if (data_size == 0 || data_size > SFX_BUF_SIZE) {
         ESP_LOGW(TAG, "SFX data_size=%u too large or zero, clamping to %d",
                  (unsigned)data_size, SFX_BUF_SIZE);
         data_size = (data_size > SFX_BUF_SIZE) ? SFX_BUF_SIZE : data_size;
     }
 
-    item->sample_rate = header.sample_rate;
-    item->bits_per_sample = header.bits_per_sample;
-    uint16_t channels = header.num_channels;
+    item->sample_rate = info.sample_rate;
+    item->bits_per_sample = info.bits_per_sample;
+    uint16_t channels = info.num_channels;
 
     // 计算样本数
-    uint32_t bytes_per_sample = (header.bits_per_sample / 8) * channels;
+    uint32_t bytes_per_sample = (info.bits_per_sample / 8) * channels;
     uint32_t sample_count = data_size / bytes_per_sample;
 
     // 在PSRAM中分配stereo buffer（统一为stereo 16bit）
@@ -271,7 +346,14 @@ static esp_err_t sfx_load_to_psram(sfx_type_t type, const char *path)
     }
 
     // 读取PCM数据
-    if (header.bits_per_sample == 16 && channels == 1) {
+    if (fseek(fp, info.data_offset, SEEK_SET) != 0) {
+        heap_caps_free(item->psram_buf);
+        item->psram_buf = NULL;
+        fclose(fp);
+        return ESP_FAIL;
+    }
+
+    if (info.bits_per_sample == 16 && channels == 1) {
         // Mono 16bit → 读取后转stereo
         int16_t *mono = heap_caps_malloc(data_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
         if (mono == NULL) {
@@ -280,18 +362,29 @@ static esp_err_t sfx_load_to_psram(sfx_type_t type, const char *path)
             fclose(fp);
             return ESP_ERR_NO_MEM;
         }
-        fread(mono, 1, data_size, fp);
+        if (fread(mono, 1, data_size, fp) != data_size) {
+            heap_caps_free(mono);
+            heap_caps_free(item->psram_buf);
+            item->psram_buf = NULL;
+            fclose(fp);
+            return ESP_FAIL;
+        }
         // Mono → Stereo
         for (uint32_t i = 0; i < sample_count; i++) {
             item->psram_buf[i * 2]     = mono[i];
             item->psram_buf[i * 2 + 1] = mono[i];
         }
         heap_caps_free(mono);
-    } else if (header.bits_per_sample == 16 && channels == 2) {
+    } else if (info.bits_per_sample == 16 && channels == 2) {
         // Stereo 16bit → 直接读取
-        fread(item->psram_buf, 1, data_size, fp);
+        if (fread(item->psram_buf, 1, data_size, fp) != data_size) {
+            heap_caps_free(item->psram_buf);
+            item->psram_buf = NULL;
+            fclose(fp);
+            return ESP_FAIL;
+        }
     } else {
-        ESP_LOGE(TAG, "Unsupported WAV: %dbit %dch", header.bits_per_sample, channels);
+        ESP_LOGE(TAG, "Unsupported WAV: %dbit %dch", info.bits_per_sample, channels);
         heap_caps_free(item->psram_buf);
         item->psram_buf = NULL;
         fclose(fp);
@@ -303,8 +396,8 @@ static esp_err_t sfx_load_to_psram(sfx_type_t type, const char *path)
     item->loaded = true;
 
     ESP_LOGI(TAG, "SFX[type=%d] loaded: %u samples, %u Hz, %d ch, %d bit, PSRAM @ %p",
-             type, (unsigned)sample_count, (unsigned)header.sample_rate,
-             channels, header.bits_per_sample, item->psram_buf);
+             type, (unsigned)sample_count, (unsigned)info.sample_rate,
+             channels, info.bits_per_sample, item->psram_buf);
     return ESP_OK;
 }
 
@@ -539,6 +632,63 @@ music_state_t bsp_music_get_state(void)
     return s_music_state;
 }
 
+static void music_system_cleanup(void)
+{
+    if (s_music_task_handle != NULL) {
+        vTaskDelete(s_music_task_handle);
+        s_music_task_handle = NULL;
+    }
+    if (s_sfx_task_handle != NULL) {
+        vTaskDelete(s_sfx_task_handle);
+        s_sfx_task_handle = NULL;
+    }
+    if (s_event_task_handle != NULL) {
+        vTaskDelete(s_event_task_handle);
+        s_event_task_handle = NULL;
+    }
+
+    if (s_sfx_queue != NULL) {
+        vQueueDelete(s_sfx_queue);
+        s_sfx_queue = NULL;
+    }
+    if (s_event_queue != NULL) {
+        vQueueDelete(s_event_queue);
+        s_event_queue = NULL;
+    }
+    if (s_music_resume_sem != NULL) {
+        vSemaphoreDelete(s_music_resume_sem);
+        s_music_resume_sem = NULL;
+    }
+    if (s_i2s_mutex != NULL) {
+        vSemaphoreDelete(s_i2s_mutex);
+        s_i2s_mutex = NULL;
+    }
+
+    for (int i = 0; i < DMA_BUF_COUNT; i++) {
+        if (s_dma_buf[i] != NULL) {
+            heap_caps_free(s_dma_buf[i]);
+            s_dma_buf[i] = NULL;
+        }
+    }
+    s_cur_buf = 0;
+
+    for (int i = 0; i < SFX_MAX; i++) {
+        if (s_sfx[i].psram_buf != NULL) {
+            heap_caps_free(s_sfx[i].psram_buf);
+            s_sfx[i].psram_buf = NULL;
+        }
+        s_sfx[i].sample_count = 0;
+        s_sfx[i].sample_rate = 0;
+        s_sfx[i].bits_per_sample = 0;
+        s_sfx[i].loaded = false;
+    }
+
+    s_sfx_playing = false;
+    s_sfx_sample_pos = 0;
+    s_sfx_current = SFX_NONE;
+    s_music_state = MUSIC_STATE_STOPPED;
+}
+
 // ============================================================
 // 初始化
 // ============================================================
@@ -552,17 +702,23 @@ music_state_t bsp_music_get_state(void)
  */
 esp_err_t bsp_music_freertos_init(void)
 {
-    esp_err_t ret;
+    esp_err_t ret = ESP_OK;
     BaseType_t x;
 
     ESP_LOGI(TAG, "=== FreeRTOS Music System Init ===");
+
+    if (s_music_task_handle != NULL && s_sfx_task_handle != NULL && s_event_task_handle != NULL) {
+        ESP_LOGI(TAG, "FreeRTOS music system already initialized");
+        return ESP_OK;
+    }
 
     // 1. 创建I2S互斥锁
     if (s_i2s_mutex == NULL) {
         s_i2s_mutex = xSemaphoreCreateMutex();
         if (s_i2s_mutex == NULL) {
             ESP_LOGE(TAG, "I2S mutex create failed");
-            return ESP_FAIL;
+            ret = ESP_FAIL;
+            goto fail;
         }
     }
 
@@ -571,7 +727,8 @@ esp_err_t bsp_music_freertos_init(void)
         s_music_resume_sem = xSemaphoreCreateBinary();
         if (s_music_resume_sem == NULL) {
             ESP_LOGE(TAG, "Resume semaphore create failed");
-            return ESP_FAIL;
+            ret = ESP_FAIL;
+            goto fail;
         }
     }
 
@@ -580,7 +737,8 @@ esp_err_t bsp_music_freertos_init(void)
         s_sfx_queue = xQueueCreate(4, sizeof(sfx_request_t));
         if (s_sfx_queue == NULL) {
             ESP_LOGE(TAG, "SFX queue create failed");
-            return ESP_FAIL;
+            ret = ESP_FAIL;
+            goto fail;
         }
     }
 
@@ -589,7 +747,8 @@ esp_err_t bsp_music_freertos_init(void)
         s_event_queue = xQueueCreate(8, sizeof(event_msg_t));
         if (s_event_queue == NULL) {
             ESP_LOGE(TAG, "Event queue create failed");
-            return ESP_FAIL;
+            ret = ESP_FAIL;
+            goto fail;
         }
     }
 
@@ -613,7 +772,7 @@ esp_err_t bsp_music_freertos_init(void)
     ret = dma_buffer_init();
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "DMA buffer init failed");
-        return ret;
+        goto fail;
     }
 
     // 7. 创建musicTask（背景音乐监控任务）
@@ -625,11 +784,12 @@ esp_err_t bsp_music_freertos_init(void)
             MUSIC_TASK_STACK,
             NULL,
             MUSIC_TASK_PRIO,
-            NULL,
+            &s_music_task_handle,
             1);  // Core 1
     if (x != pdPASS) {
         ESP_LOGE(TAG, "musicTask create failed");
-        return ESP_FAIL;
+        ret = ESP_FAIL;
+        goto fail;
     }
     ESP_LOGI(TAG, "musicTask created");
 
@@ -640,11 +800,12 @@ esp_err_t bsp_music_freertos_init(void)
             SFX_TASK_STACK,
             NULL,
             SFX_TASK_PRIO,
-            NULL,
+            &s_sfx_task_handle,
             1);  // Core 1
     if (x != pdPASS) {
         ESP_LOGE(TAG, "sfxTask create failed");
-        return ESP_FAIL;
+        ret = ESP_FAIL;
+        goto fail;
     }
     ESP_LOGI(TAG, "sfxTask created");
 
@@ -655,11 +816,12 @@ esp_err_t bsp_music_freertos_init(void)
             EVENT_TASK_STACK,
             NULL,
             EVENT_TASK_PRIO,
-            NULL,
+            &s_event_task_handle,
             1);  // Core 1
     if (x != pdPASS) {
         ESP_LOGE(TAG, "eventTask create failed");
-        return ESP_FAIL;
+        ret = ESP_FAIL;
+        goto fail;
     }
     ESP_LOGI(TAG, "eventTask created");
 
@@ -667,4 +829,9 @@ esp_err_t bsp_music_freertos_init(void)
 
     ESP_LOGI(TAG, "=== FreeRTOS Music System Init OK ===");
     return ESP_OK;
+
+fail:
+    ESP_LOGE(TAG, "=== FreeRTOS Music System Init FAILED, cleanup ===");
+    music_system_cleanup();
+    return ret;
 }
